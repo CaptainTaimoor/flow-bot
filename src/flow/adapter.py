@@ -1,180 +1,114 @@
-from playwright.async_api import Page, TimeoutError
-from src.models.domain import JobCreate
-from src.config.settings import settings
+import os
 import logging
 import asyncio
-import os
+from typing import Optional, Set, Callable
+from playwright.async_api import Page, Locator
+from src.config.settings import settings
+from src.models.domain import JobCreate, FlowCapabilities
+from src.flow.selectors import FlowSelectors
+from src.flow.capability_detection import FlowCapabilityDetector
+from src.flow.projects import FlowProjectManager
+from src.flow.assets import FlowAssetTracker
+from src.flow.generation import FlowGenerationExecutor
+from src.flow.auth import AuthManager
 
 logger = logging.getLogger(__name__)
 
 class GoogleFlowAdapter:
+    """Consolidated Google Flow automation facade coordinating modular services."""
+
     def __init__(self, page: Page):
         self.page = page
+        self.project_manager = FlowProjectManager(page)
+        self.asset_tracker = FlowAssetTracker(page)
+        self.generation_executor = FlowGenerationExecutor(page)
+        self._baseline_assets: Set[str] = set()
 
     async def open_flow(self):
-        """Navigate to Flow URL and ensure project workspace is open."""
-        logger.info(f"Navigating to {settings.FLOW_URL}...")
-        # Use domcontentloaded to avoid hanging on persistent websockets
+        """Navigates to Flow and enters the project workspace."""
+        logger.info(f"Navigating to Flow: {settings.FLOW_URL}...")
         await self.page.goto(settings.FLOW_URL, wait_until="domcontentloaded")
         await asyncio.sleep(4)
-        
-        # Click the 'New project' button if on project gallery/landing
-        try:
-            new_proj_btn = self.page.locator("button:has-text('New project')").first
-            if await new_proj_btn.count() > 0 and await new_proj_btn.is_visible():
-                logger.info("Found 'New project' button. Clicking...")
-                await new_proj_btn.click()
-                await asyncio.sleep(5)
-            else:
-                logger.info("Checking if already in project workspace...")
-        except Exception as e:
-            logger.debug(f"Note on opening project: {e}")
+        await self.project_manager.ensure_project_open()
+
+    async def detect_capabilities(self) -> FlowCapabilities:
+        """Inspects and returns the live capabilities of the current Flow UI."""
+        return await FlowCapabilityDetector.detect_capabilities(self.page)
+
+    async def prepare_for_submission(self) -> Set[str]:
+        """Snapshots existing assets prior to prompt submission for correlation."""
+        self._baseline_assets = await self.asset_tracker.snapshot_existing_assets()
+        return self._baseline_assets
 
     async def submit_prompt(self, job: JobCreate) -> bool:
-        """Enters the prompt, clicks Start Generation, and auto-approves credit usage."""
-        prompt_input = self.page.locator(".ProseMirror").first
-        
-        try:
-            await prompt_input.wait_for(state="visible", timeout=20000)
-        except TimeoutError:
-            logger.error("Could not find prompt box (.ProseMirror). Taking debug screenshot...")
-            os.makedirs(settings.DIAGNOSTICS_DIR, exist_ok=True)
-            await self.page.screenshot(path=os.path.join(settings.DIAGNOSTICS_DIR, "debug_no_prosemirror.png"))
-            return False
+        """Submits the prompt into the workspace and auto-approves credit prompts."""
+        return await self.generation_executor.submit_prompt_and_confirm(
+            prompt=job.prompt,
+            auto_confirm=settings.AUTO_CONFIRM_GENERATION,
+        )
 
-        logger.info(f"Typing prompt: {job.prompt[:40]}...")
-        await prompt_input.click()
-        await self.page.keyboard.type(job.prompt, delay=12)
-        await asyncio.sleep(1)
-
-        # Click Start generation
-        generate_btn = self.page.locator("button[aria-label='Start generation']").first
-        try:
-            if await generate_btn.count() == 0:
-                logger.error("Could not find 'Start generation' button.")
-                return False
-                
-            await generate_btn.wait_for(state="visible", timeout=5000)
-            await generate_btn.click()
-            logger.info("Generate button clicked.")
-        except TimeoutError:
-            logger.error("Generate button did not become clickable.")
-            return False
-            
-        # Check and handle credit confirmation ('Always approve' / 'Approve')
-        logger.info("Checking for credit confirmation prompt...")
-        for _ in range(8):
-            await asyncio.sleep(1.5)
-            approve_btn = self.page.locator(
-                "button:has-text('Always approve'), [role='button']:has-text('Always approve'), "
-                "button:has-text('Approve'), [role='button']:has-text('Approve')"
-            ).first
-            
-            if await approve_btn.count() > 0 and await approve_btn.is_visible():
-                btn_text = await approve_btn.inner_text()
-                logger.info(f"Auto-confirming video generation with: '{btn_text}'")
-                await approve_btn.click()
-                await asyncio.sleep(2)
-                return True
-                
-        # If no confirmation appeared, it may already be approved or directly started
-        logger.info("Prompt submitted and accepted directly without prompt.")
-        return True
-            
-    async def wait_for_generation(self) -> bool:
-        """
-        Monitors generation progress on Google Flow canvas.
-        Detects flow-video-tile, progress bar, or queued status.
-        """
-        logger.info(f"Monitoring generation progress (timeout: {settings.GENERATION_TIMEOUT}s)...")
+    async def locate_generated_tile(self, prompt: str, timeout_seconds: int = 45) -> Optional[Locator]:
+        """Polls for the newly created tile on the canvas matching the current generation."""
         start_time = asyncio.get_event_loop().time()
-        
+        while asyncio.get_event_loop().time() - start_time < timeout_seconds:
+            tile = await self.asset_tracker.find_new_asset_tile(self._baseline_assets, prompt)
+            if tile:
+                return tile
+            await asyncio.sleep(4)
+        return None
+
+    async def wait_for_completion(
+        self,
+        tile: Optional[Locator],
+        progress_callback: Optional[Callable[[Optional[int], str], None]] = None,
+    ) -> bool:
+        """Waits for generation to complete on the tile or general workspace."""
+        if tile:
+            return await self.generation_executor.wait_for_tile_completion(
+                tile=tile,
+                timeout_seconds=settings.GENERATION_TIMEOUT,
+                progress_callback=progress_callback,
+            )
+
+        # Fallback if specific tile handle wasn't isolated
+        logger.info("Monitoring general workspace for completion...")
+        start_time = asyncio.get_event_loop().time()
         while asyncio.get_event_loop().time() - start_time < settings.GENERATION_TIMEOUT:
-            # Check if video tile appeared on canvas
-            tile = self.page.locator("flow-video-tile").first
-            if await tile.count() > 0:
-                # Check if progress bar exists or has finished
-                pb = tile.locator(".progress-bar")
-                if await pb.count() > 0:
-                    style = await pb.get_attribute("style") or ""
-                    # If 100% or done
-                    if "100%" in style:
-                        logger.info("Video generation reached 100%!")
-                        return True
-                else:
-                    # No progress bar on tile often means rendering is complete
-                    logger.info("Video tile present with no active progress bar (ready).")
+            tiles = await self.page.locator(FlowSelectors.VIDEO_TILE).all()
+            if tiles:
+                pb = tiles[0].locator(FlowSelectors.TILE_PROGRESS_BAR).first
+                if await pb.count() == 0:
+                    if progress_callback:
+                        progress_callback(100, "Rendering complete")
                     return True
-                    
-            # Check for direct download button
-            dl = self.page.locator("button:has-text('Download'), button[aria-label*='Download' i]").first
-            if await dl.count() > 0 and await dl.is_visible():
-                logger.info("Direct download button is now visible!")
-                return True
-                
-            # Check for video tag
-            videos = await self.page.locator("video").all()
-            for v in videos:
-                src = await v.get_attribute("src") or ""
-                if src and ("blob:" in src or "http" in src):
-                    logger.info("Active video stream ready.")
-                    return True
-                    
-            await asyncio.sleep(10)
-            
-        logger.warning("Generation wait reached configured timeout.")
+            await asyncio.sleep(8)
+
         return False
 
-    async def download_asset(self, job_id: int) -> str | None:
-        """Downloads the generated asset from the tile menu or viewer."""
-        try:
-            # Method 1: Check direct download button
-            dl_btn = self.page.locator("button:has-text('Download'), button[aria-label*='Download' i]").first
-            if await dl_btn.count() > 0 and await dl_btn.is_visible():
-                logger.info("Using direct download button...")
-                return await self._trigger_download(dl_btn, job_id)
+    async def download_asset(
+        self, job_id: int, generation_id: int, target_tile: Optional[Locator] = None
+    ) -> Optional[str]:
+        """Downloads the video asset to the designated media storage path."""
+        from src.media.service import media_service
+        dest_path = str(media_service.get_destination_video_path(job_id, generation_id))
 
-            # Method 2: Use flow-video-tile hover hotbar menu
-            tile = self.page.locator("flow-video-tile").first
-            if await tile.count() > 0:
-                logger.info("Hovering over video tile to reveal hotbar...")
-                await tile.hover()
-                await asyncio.sleep(1)
-                
-                more_btn = tile.locator("button[aria-label='More options']").first
-                if await more_btn.count() > 0:
-                    logger.info("Opening tile options menu...")
-                    await more_btn.click()
-                    await asyncio.sleep(1.5)
-                    
-                    menu_dl = self.page.locator("[role='menuitem']:has-text('Download'), button:has-text('Download')").first
-                    if await menu_dl.count() > 0 and await menu_dl.is_visible():
-                        logger.info("Found Download in tile menu! Triggering...")
-                        return await self._trigger_download(menu_dl, job_id)
-                        
-                # Method 3: Click tile directly to open viewer and look for download
-                logger.info("Clicking video tile to open viewer...")
-                await tile.click()
-                await asyncio.sleep(2)
-                
-                viewer_dl = self.page.locator("button[aria-label*='Download' i], button:has-text('Download')").first
-                if await viewer_dl.count() > 0 and await viewer_dl.is_visible():
-                    logger.info("Found download button in viewer!")
-                    return await self._trigger_download(viewer_dl, job_id)
-                    
-            logger.error("Could not locate download trigger on tile or viewer.")
-            return None
-        except Exception as e:
-            logger.error(f"Error downloading asset: {e}")
-            return None
+        if target_tile:
+            downloaded = await self.asset_tracker.download_tile_asset(target_tile, dest_path)
+            if downloaded:
+                return downloaded
 
-    async def _trigger_download(self, locator, job_id: int) -> str:
-        os.makedirs(settings.OUTPUT_DIR, exist_ok=True)
-        file_path = os.path.join(settings.OUTPUT_DIR, f"generation_{job_id}.mp4")
-        
-        async with self.page.expect_download(timeout=20000) as dl_info:
-            await locator.click()
-        download = await dl_info.value
-        await download.save_as(file_path)
-        logger.info(f"Asset successfully saved to {file_path}")
-        return file_path
+        # Fallback to direct download button
+        dl_btn = self.page.locator(FlowSelectors.DOWNLOAD_BUTTONS).first
+        if await dl_btn.count() > 0 and await dl_btn.is_visible():
+            logger.info("Attempting direct download button fallback...")
+            try:
+                os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+                async with self.page.expect_download(timeout=25000) as dl_info:
+                    await dl_btn.click()
+                dl = await dl_info.value
+                await dl.save_as(dest_path)
+                return dest_path
+            except Exception as e:
+                logger.error(f"Fallback download failed: {e}")
+
+        return None

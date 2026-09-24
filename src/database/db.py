@@ -1,42 +1,38 @@
-import sqlite3
 import os
+from contextlib import contextmanager
+from typing import Generator
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, Session
 from src.config.settings import settings
+from src.database.models import Base
+
+# Engine configuration with check_same_thread=False for SQLite
+engine = create_engine(
+    settings.database_url,
+    connect_args={"check_same_thread": False},
+    echo=False,
+)
+
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def init_db():
-    os.makedirs(os.path.dirname(settings.database_path), exist_ok=True)
-    conn = sqlite3.connect(settings.database_path)
-    cursor = conn.cursor()
-    
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS jobs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            prompt TEXT NOT NULL,
-            status TEXT DEFAULT 'QUEUED',
-            model TEXT,
-            orientation TEXT,
-            duration TEXT,
-            outputs INTEGER DEFAULT 1,
-            project TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            error_message TEXT,
-            output_path TEXT,
-            retry_count INTEGER DEFAULT 0
-        )
-    """)
-    
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS generations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            job_id INTEGER NOT NULL,
-            state TEXT DEFAULT 'CREATED',
-            flow_project_id TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY(job_id) REFERENCES jobs(id)
-        )
-    """)
-    
-    conn.commit()
-    conn.close()
+    """Initializes the database schema and verifies directories."""
+    settings.ensure_directories()
+    Base.metadata.create_all(bind=engine)
 
-def get_connection():
-    return sqlite3.connect(settings.database_path)
+def get_db() -> Generator[Session, None, None]:
+    """FastAPI dependency for database sessions."""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+@contextmanager
+def get_db_context() -> Generator[Session, None, None]:
+    """Context manager for background workers and CLI tasks."""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
