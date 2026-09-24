@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flow Automation Bot</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 p-8">
+    <div class="max-w-4xl mx-auto">
+        <h1 class="text-3xl font-bold mb-8">Google Flow Automation Bot</h1>
+        
+        <div class="bg-white p-6 rounded shadow mb-8">
+            <h2 class="text-xl font-semibold mb-4">New Generation Job</h2>
+            <form id="jobForm" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Prompt</label>
+                    <textarea id="prompt" rows="3" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border" required placeholder="A cinematic landscape..."></textarea>
+                </div>
+                <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Submit Job</button>
+            </form>
+        </div>
+        
+        <div class="bg-white p-6 rounded shadow">
+            <h2 class="text-xl font-semibold mb-4">Recent Jobs</h2>
+            <div id="jobsList" class="space-y-4">
+                <!-- Jobs populated by JS -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        async function fetchJobs() {
+            try {
+                const res = await fetch('/api/v1/jobs');
+                const jobs = await res.json();
+                const container = document.getElementById('jobsList');
+                container.innerHTML = '';
+                
+                jobs.forEach(job => {
+                    const el = document.createElement('div');
+                    el.className = 'border p-4 rounded';
+                    el.innerHTML = `
+                        <div class="flex justify-between">
+                            <strong>Job #${job.id} - <span class="${job.status === 'SUCCESS' ? 'text-green-600' : job.status === 'FAILED' ? 'text-red-600' : 'text-yellow-600'}">${job.status}</span></strong>
+                            <span class="text-sm text-gray-500">${new Date(job.created_at).toLocaleString()}</span>
+                        </div>
+                        <p class="mt-2 text-sm text-gray-800">${job.prompt}</p>
+                        ${job.output_path ? `<p class="mt-2 text-sm text-green-600">Output: ${job.output_path}</p>` : ''}
+                        ${job.error_message ? `<p class="mt-2 text-sm text-red-600">Error: ${job.error_message}</p>` : ''}
+                    `;
+                    container.appendChild(el);
+                });
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        document.getElementById('jobForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const prompt = document.getElementById('prompt').value;
+            await fetch('/api/v1/jobs', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ prompt })
+            });
+            document.getElementById('prompt').value = '';
+            fetchJobs();
+        });
+
+        // Poll every 5 seconds
+        setInterval(fetchJobs, 5000);
+        fetchJobs();
+    </script>
+</body>
+</html>
