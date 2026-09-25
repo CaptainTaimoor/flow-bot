@@ -37,20 +37,22 @@ export const VideoDetailModal: React.FC<VideoDetailModalProps> = ({
     return `${mb.toFixed(2)} MB`;
   };
 
+  const isPortrait = Boolean(asset.width && asset.height && asset.height > asset.width);
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
-      <div className="relative w-full max-w-5xl bg-studio-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+      <div className="relative w-full max-w-5xl bg-studio-900 border border-slate-800 rounded-xl sm:rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[94vh]">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-studio-950/50">
-          <div className="flex items-center space-x-3">
-            <div className="p-2 bg-brand-500/10 text-brand-400 rounded-lg">
+        <div className="flex items-center justify-between px-4 sm:px-6 py-3 sm:py-4 border-b border-slate-800 bg-studio-950/50">
+          <div className="flex items-center space-x-2.5 sm:space-x-3 min-w-0">
+            <div className="p-2 bg-brand-500/10 text-brand-400 rounded-lg shrink-0">
               <Film className="w-5 h-5" />
             </div>
-            <div>
-              <h2 className="text-base font-semibold text-white truncate max-w-md">
+            <div className="min-w-0">
+              <h2 className="text-sm sm:text-base font-semibold text-white truncate max-w-[200px] xs:max-w-xs sm:max-w-md">
                 {asset.filename}
               </h2>
-              <p className="text-xs text-slate-400">
+              <p className="text-[11px] sm:text-xs text-slate-400">
                 Job #{asset.job_id} • Created {new Date(asset.created_at).toLocaleString()}
               </p>
             </div>
@@ -58,17 +60,21 @@ export const VideoDetailModal: React.FC<VideoDetailModalProps> = ({
 
           <button
             onClick={onClose}
-            className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
+            className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors shrink-0 ml-2"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Content Body */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 p-6 overflow-y-auto">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 p-4 sm:p-6 overflow-y-auto">
           {/* Main Video Player */}
-          <div className="lg:col-span-2 flex flex-col justify-center">
-            <div className="aspect-video w-full rounded-xl overflow-hidden bg-black shadow-lg">
+          <div className="lg:col-span-2 flex flex-col justify-center items-center">
+            <div
+              className={`w-full rounded-xl overflow-hidden bg-black shadow-lg flex items-center justify-center ${
+                isPortrait ? 'max-w-[280px] sm:max-w-xs aspect-[9/16]' : 'aspect-video'
+              }`}
+            >
               <VideoPlayer src={streamUrl} poster={thumbUrl} autoPlay className="w-full h-full" />
             </div>
           </div>

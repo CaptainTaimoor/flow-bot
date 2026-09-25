@@ -145,8 +145,84 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({ onSelectAsset, onNavig
         </div>
       </div>
 
-      {/* Jobs Table */}
-      <div className="bg-slate-900/80 border border-slate-800 rounded-xl overflow-hidden shadow-sm">
+      {/* Mobile Cards View (< md) */}
+      <div className="block md:hidden space-y-3">
+        {isLoading ? (
+          <div className="p-8 text-center text-slate-400 bg-slate-900/80 border border-slate-800 rounded-xl">
+            <RotateCw className="w-6 h-6 animate-spin mx-auto mb-2 text-indigo-400" />
+            Loading generation history...
+          </div>
+        ) : filteredJobs.length === 0 ? (
+          <div className="p-8 text-center text-slate-400 bg-slate-900/80 border border-slate-800 rounded-xl">
+            No generation records match your filter criteria.
+          </div>
+        ) : (
+          filteredJobs.map((job) => {
+            const hasAsset = job.assets && job.assets.length > 0;
+            const firstAsset = hasAsset ? job.assets![0] : null;
+
+            return (
+              <div
+                key={job.id}
+                className="bg-slate-900/90 border border-slate-800 rounded-xl p-4 space-y-3 shadow-sm"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    <span className="font-mono text-xs text-indigo-400 font-bold">#{job.id}</span>
+                    <span className="text-[11px] text-slate-500 font-mono">
+                      {new Date(job.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </div>
+                  <div>{getStatusBadge(job.status)}</div>
+                </div>
+
+                <p className="text-xs text-slate-200 line-clamp-3 font-medium">"{job.prompt}"</p>
+
+                {job.error_message && (
+                  <p className="text-[11px] text-rose-400 bg-rose-500/10 p-2 rounded-lg border border-rose-500/20 line-clamp-2">
+                    {job.error_message}
+                  </p>
+                )}
+
+                <div className="flex items-center justify-between pt-2 border-t border-slate-800/80 text-[11px] text-slate-400">
+                  <span className="font-mono text-[10px]">
+                    {job.model || 'Omni Flash'} • {job.orientation || '16:9'} • {job.duration || '4'}s
+                  </span>
+
+                  <div className="flex items-center gap-1.5">
+                    {hasAsset && firstAsset && (
+                      <button
+                        onClick={() => onSelectAsset(firstAsset)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 rounded text-xs transition"
+                      >
+                        <Play className="w-3 h-3" />
+                        <span>Play</span>
+                      </button>
+                    )}
+                    <button
+                      onClick={() => onNavigateToCreate(job.prompt)}
+                      className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded transition"
+                      title="Duplicate prompt"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => setSelectedJob(job)}
+                      className="p-1.5 bg-slate-800 hover:bg-slate-700 text-indigo-400 rounded transition"
+                      title="Inspect details"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {/* Desktop Jobs Table (>= md) */}
+      <div className="hidden md:block bg-slate-900/80 border border-slate-800 rounded-xl overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm text-slate-300">
             <thead className="bg-slate-800/60 text-xs uppercase font-semibold text-slate-400 border-b border-slate-800">

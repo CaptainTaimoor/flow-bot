@@ -119,9 +119,9 @@ const QueueItem: React.FC<{
   onDuplicate?: () => void;
 }> = ({ job, isRunning, onRetry, onCancel, onDuplicate }) => {
   return (
-    <div className="bg-studio-900 border border-slate-800 rounded-xl p-4 flex items-center justify-between shadow-sm">
-      <div className="space-y-1 max-w-xl">
-        <div className="flex items-center space-x-2 text-xs">
+    <div className="bg-studio-900 border border-slate-800 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">
+      <div className="space-y-1.5 max-w-xl">
+        <div className="flex items-center space-x-2 text-xs flex-wrap gap-y-1">
           <span className="font-mono font-bold text-slate-300">#{job.id}</span>
           <span
             className={`px-2 py-0.5 rounded text-[10px] font-mono uppercase ${
@@ -138,13 +138,13 @@ const QueueItem: React.FC<{
             {new Date(job.created_at).toLocaleTimeString()}
           </span>
         </div>
-        <p className="text-xs text-slate-200 line-clamp-1">"{job.prompt}"</p>
+        <p className="text-xs text-slate-200 line-clamp-2">"{job.prompt}"</p>
         {job.error_message && (
-          <p className="text-[11px] text-rose-400 font-mono line-clamp-1">{job.error_message}</p>
+          <p className="text-[11px] text-rose-400 font-mono line-clamp-2">{job.error_message}</p>
         )}
       </div>
 
-      <div className="flex items-center space-x-2">
+      <div className="flex items-center space-x-2 self-end sm:self-auto shrink-0">
         {onRetry && (
           <button
             onClick={onRetry}

@@ -32,11 +32,17 @@ def main():
     subparsers = parser.add_subparsers(dest="command")
 
     start_parser = subparsers.add_parser("start", help="Start the FastAPI backend and job runner")
+    start_parser.add_argument("--host", default=None, help="Host to bind server to (default: 0.0.0.0)")
+    start_parser.add_argument("--port", type=int, default=None, help="Port to bind server to (default: 8000)")
     auth_parser = subparsers.add_parser("auth", help="Perform manual browser authentication")
 
     args = parser.parse_args()
 
     if args.command == "start":
+        if args.host:
+            settings.HOST = args.host
+        if args.port:
+            settings.PORT = args.port
         from src.main import main as start_main
         start_main()
     elif args.command == "auth":

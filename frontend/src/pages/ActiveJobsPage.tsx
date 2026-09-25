@@ -117,9 +117,9 @@ const ActiveJobCard: React.FC<{ job: Job; onCancel: () => void }> = ({ job, onCa
   return (
     <div className="bg-studio-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
       {/* Top Details */}
-      <div className="flex items-start justify-between">
-        <div className="space-y-1 max-w-2xl">
-          <div className="flex items-center space-x-2">
+      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+        <div className="space-y-1.5 max-w-2xl">
+          <div className="flex items-center space-x-2 flex-wrap gap-y-1">
             <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-brand-500/20 text-brand-300 border border-brand-500/30">
               JOB #{job.id}
             </span>
@@ -127,13 +127,13 @@ const ActiveJobCard: React.FC<{ job: Job; onCancel: () => void }> = ({ job, onCa
               Model: {job.model || 'veo'} • {job.orientation || '16:9'} • {job.duration || '5'}s
             </span>
           </div>
-          <p className="text-sm font-medium text-slate-100 pt-1 line-clamp-2">
+          <p className="text-sm font-medium text-slate-100 pt-1 line-clamp-3 sm:line-clamp-2">
             "{job.prompt}"
           </p>
         </div>
 
-        <div className="flex items-center space-x-4">
-          <div className="text-right">
+        <div className="flex items-center justify-between sm:justify-end space-x-4 border-t sm:border-t-0 pt-2 sm:pt-0 border-slate-800">
+          <div className="text-left sm:text-right">
             <span className="text-[10px] text-slate-500 uppercase tracking-wider block">Elapsed</span>
             <span className="text-sm font-mono font-semibold text-white">{formatElapsed(elapsed)}</span>
           </div>
@@ -167,34 +167,36 @@ const ActiveJobCard: React.FC<{ job: Job; onCancel: () => void }> = ({ job, onCa
       </div>
 
       {/* Visual Stage Stepper */}
-      <div className="grid grid-cols-5 md:grid-cols-10 gap-2 pt-2">
-        {STAGES.map((st, idx) => {
-          const isDone = idx < currentStageIndex;
-          const isCurrent = idx === currentStageIndex;
+      <div className="overflow-x-auto no-scrollbar pb-1">
+        <div className="grid grid-cols-5 md:grid-cols-10 gap-2 min-w-[300px] pt-2">
+          {STAGES.map((st, idx) => {
+            const isDone = idx < currentStageIndex;
+            const isCurrent = idx === currentStageIndex;
 
-          return (
-            <div key={st.state} className="flex flex-col items-center text-center space-y-1">
-              <div
-                className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-mono transition-all ${
-                  isDone
-                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
-                    : isCurrent
-                    ? 'bg-brand-500 text-white shadow-lg shadow-brand-500/40 animate-pulse'
-                    : 'bg-studio-950 text-slate-600 border border-slate-800'
-                }`}
-              >
-                {isDone ? <CheckCircle className="w-3.5 h-3.5" /> : idx + 1}
+            return (
+              <div key={st.state} className="flex flex-col items-center text-center space-y-1">
+                <div
+                  className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-mono transition-all ${
+                    isDone
+                      ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                      : isCurrent
+                      ? 'bg-brand-500 text-white shadow-lg shadow-brand-500/40 animate-pulse'
+                      : 'bg-studio-950 text-slate-600 border border-slate-800'
+                  }`}
+                >
+                  {isDone ? <CheckCircle className="w-3.5 h-3.5" /> : idx + 1}
+                </div>
+                <span
+                  className={`text-[10px] truncate max-w-full ${
+                    isCurrent ? 'text-brand-300 font-semibold' : isDone ? 'text-slate-400' : 'text-slate-600'
+                  }`}
+                >
+                  {st.label}
+                </span>
               </div>
-              <span
-                className={`text-[10px] truncate max-w-full ${
-                  isCurrent ? 'text-brand-300 font-semibold' : isDone ? 'text-slate-400' : 'text-slate-600'
-                }`}
-              >
-                {st.label}
-              </span>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
     </div>
   );

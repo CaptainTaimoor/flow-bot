@@ -145,6 +145,12 @@ export interface SystemStatus {
     failed_today: number;
     total_videos: number;
   };
+  network?: {
+    local: string;
+    network: string[];
+    tailscale: string[];
+    hostname?: string;
+  };
 }
 
 export interface DiagnosticItem {

@@ -45,6 +45,7 @@ def health_check():
 
 @router.get("/status")
 def system_status(db: Session = Depends(get_db)):
+    from src.config.network import get_network_endpoints
     repo = Repository(db)
     stats = repo.get_stats()
     b_status = browser_service.get_status()
@@ -56,6 +57,7 @@ def system_status(db: Session = Depends(get_db)):
         "credit_safety_mode": cfg.get("CREDIT_SAFETY_MODE", "STRICT"),
         "browser": b_status,
         "stats": stats,
+        "network": get_network_endpoints(settings.PORT),
     }
 
 @router.get("/auth/status")

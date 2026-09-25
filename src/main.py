@@ -91,7 +91,21 @@ else:
         )
 
 def main():
-    logger.info(f"Starting server at http://{settings.HOST}:{settings.PORT}")
+    from src.config.network import get_network_endpoints
+    endpoints = get_network_endpoints(settings.PORT)
+
+    logger.info("=" * 64)
+    logger.info(" Flow Studio V2 Server Online")
+    logger.info(f" -> Localhost:  {endpoints['local']}")
+    for lan in endpoints.get("network", []):
+        logger.info(f" -> Network:    {lan}")
+    for ts in endpoints.get("tailscale", []):
+        logger.info(f" -> Tailscale:  {ts}")
+    if endpoints.get("hostname"):
+        logger.info(f" -> Hostname:   {endpoints['hostname']}")
+    logger.info(f" Binding on {settings.HOST}:{settings.PORT}")
+    logger.info("=" * 64)
+
     uvicorn.run(
         "src.main:app",
         host=settings.HOST,

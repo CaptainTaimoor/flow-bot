@@ -11,13 +11,18 @@ import {
   Globe, 
   Check, 
   Cpu,
-  Coins
+  Coins,
+  Wifi,
+  Smartphone,
+  Copy,
+  ExternalLink
 } from 'lucide-react';
 
 export const SettingsPage: React.FC = () => {
   const queryClient = useQueryClient();
   const [formData, setFormData] = useState<AppSettings | null>(null);
   const [savedSuccess, setSavedSuccess] = useState(false);
+  const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
 
   const { data: settings, isLoading } = useQuery({
     queryKey: ['settings'],
@@ -28,6 +33,17 @@ export const SettingsPage: React.FC = () => {
     queryKey: ['capabilities'],
     queryFn: () => api.getCapabilities(),
   });
+
+  const { data: systemStatus } = useQuery({
+    queryKey: ['systemStatus'],
+    queryFn: () => api.getStatus(),
+  });
+
+  const handleCopy = (url: string) => {
+    navigator.clipboard.writeText(url);
+    setCopiedUrl(url);
+    setTimeout(() => setCopiedUrl(null), 2000);
+  };
 
   useEffect(() => {
     if (settings) {
@@ -357,6 +373,109 @@ export const SettingsPage: React.FC = () => {
               </p>
             </div>
           </label>
+        </div>
+      </div>
+
+      {/* Remote Access & Network Section */}
+      <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-6 space-y-5">
+        <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+          <div className="flex items-center gap-2">
+            <Wifi className="w-4 h-4 text-emerald-400" />
+            <h2 className="text-base font-semibold text-white">Remote Access & Network Devices</h2>
+          </div>
+          <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+            Multi-Device Ready
+          </span>
+        </div>
+
+        <p className="text-xs text-slate-400 leading-relaxed">
+          Flow Studio is listening on all network interfaces (<code className="text-indigo-400">0.0.0.0:8000</code>). Access your Studio from any mobile device, tablet, or remote PC on your local Wi-Fi or Tailscale tailnet.
+        </p>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Tailscale Tailnet Access */}
+          <div className="bg-slate-950/70 border border-slate-800/80 rounded-xl p-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-cyan-300 flex items-center gap-1.5">
+                <Smartphone className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Tailscale Tailnet (Worldwide)</span>
+              </span>
+              <span className="text-[10px] font-mono text-slate-500">Remote</span>
+            </div>
+            {systemStatus?.network?.tailscale && systemStatus.network.tailscale.length > 0 ? (
+              systemStatus.network.tailscale.map((tsUrl: string, i: number) => (
+                <div key={i} className="flex items-center justify-between bg-slate-900 p-2 rounded-lg border border-slate-800">
+                  <span className="text-xs font-mono text-cyan-400 truncate mr-2">{tsUrl}</span>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => handleCopy(tsUrl)}
+                      className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-white transition"
+                      title="Copy URL"
+                    >
+                      {copiedUrl === tsUrl ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    </button>
+                    <a
+                      href={tsUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-white transition"
+                      title="Open link"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </a>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <p className="text-xs text-slate-500">No Tailscale IP detected.</p>
+            )}
+            <p className="text-[11px] text-slate-500">
+              Open from your phone or laptop anywhere connected to your Tailscale network.
+            </p>
+          </div>
+
+          {/* Local Wi-Fi / LAN Access */}
+          <div className="bg-slate-950/70 border border-slate-800/80 rounded-xl p-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-emerald-300 flex items-center gap-1.5">
+                <Wifi className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Local Network (Wi-Fi / LAN)</span>
+              </span>
+              <span className="text-[10px] font-mono text-slate-500">Local</span>
+            </div>
+            {systemStatus?.network?.network && systemStatus.network.network.length > 0 ? (
+              systemStatus.network.network.map((lanUrl: string, i: number) => (
+                <div key={i} className="flex items-center justify-between bg-slate-900 p-2 rounded-lg border border-slate-800">
+                  <span className="text-xs font-mono text-emerald-400 truncate mr-2">{lanUrl}</span>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => handleCopy(lanUrl)}
+                      className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-white transition"
+                      title="Copy URL"
+                    >
+                      {copiedUrl === lanUrl ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    </button>
+                    <a
+                      href={lanUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-white transition"
+                      title="Open link"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </a>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <p className="text-xs text-slate-500">No secondary network IP detected.</p>
+            )}
+            <p className="text-[11px] text-slate-500">
+              Open from any phone or computer connected to your home/office Wi-Fi.
+            </p>
+          </div>
         </div>
       </div>
     </form>

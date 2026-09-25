@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { QueryClient, QueryClientProvider, useQuery, useMutation } from '@tanstack/react-query';
 import { Navbar } from './components/Navbar';
 import { Sidebar, NavItem } from './components/Sidebar';
+import { MobileBottomNav } from './components/MobileBottomNav';
 import { OverviewPage } from './pages/OverviewPage';
 import { CreateVideoPage } from './pages/CreateVideoPage';
 import { ActiveJobsPage } from './pages/ActiveJobsPage';
@@ -35,6 +36,7 @@ interface Toast {
 const MainApp: React.FC = () => {
   const [currentTab, setCurrentTab] = useState<NavItem>('overview');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
   const [createPrompt, setCreatePrompt] = useState<string>('');
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -124,20 +126,23 @@ const MainApp: React.FC = () => {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-indigo-500 selection:text-white">
       {/* Top Navigation */}
-      <Navbar />
+      <Navbar onToggleMobileMenu={() => setMobileMenuOpen(true)} />
 
-      <div className="flex-1 flex overflow-hidden">
-        {/* Sidebar */}
+      <div className="flex-1 flex overflow-hidden relative">
+        {/* Sidebar (Desktop persistent + Mobile slide-over drawer) */}
         <Sidebar
           currentTab={currentTab}
           onTabChange={setCurrentTab}
           collapsed={sidebarCollapsed}
           onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
           activeJobsCount={status?.stats.active || 0}
+          mobileOpen={mobileMenuOpen}
+          onCloseMobile={() => setMobileMenuOpen(false)}
+          network={status?.network}
         />
 
         {/* Main Content Area */}
-        <main className="flex-1 overflow-y-auto p-6 md:p-8">
+        <main className="flex-1 overflow-y-auto p-3.5 sm:p-6 md:p-8 pb-24 md:pb-8">
           {currentTab === 'overview' && (
             <OverviewPage
               onCreateJob={(prompt) => handleNavigateToCreate(prompt)}
@@ -191,6 +196,14 @@ const MainApp: React.FC = () => {
         </main>
       </div>
 
+      {/* Mobile Bottom Navigation Bar (Screens < md) */}
+      <MobileBottomNav
+        currentTab={currentTab}
+        onTabChange={setCurrentTab}
+        onOpenMenu={() => setMobileMenuOpen(true)}
+        activeJobsCount={status?.stats.active || 0}
+      />
+
       {/* Video Detail Modal with range-streaming player */}
       {selectedAsset && (
         <VideoDetailModal
@@ -205,7 +218,7 @@ const MainApp: React.FC = () => {
       )}
 
       {/* Toast Notification Container */}
-      <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-2 max-w-sm w-full pointer-events-none">
+      <div className="fixed bottom-20 md:bottom-6 right-3 sm:right-6 left-3 sm:left-auto z-50 flex flex-col gap-2 max-w-sm w-full pointer-events-none">
         {toasts.map((toast) => (
           <div
             key={toast.id}
