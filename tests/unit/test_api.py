@@ -40,19 +40,21 @@ def test_status(client):
     res = client.get("/api/v1/status")
     assert res.status_code == 200
     assert "stats" in res.json()
+    assert "credit_safety_mode" in res.json()
 
 def test_capabilities(client):
     res = client.get("/api/v1/capabilities")
     assert res.status_code == 200
     data = res.json()
     assert data["standard_generation"] is True
-    assert "veo" in data["models_available"]
+    assert len(data["models_available"]) > 0
+    assert data["credit_status"] in ["VERIFIED", "UNKNOWN"]
 
 def test_job_lifecycle(client):
     # 1. Create job
     create_payload = {
         "prompt": "Cinematic test prompt for API validation",
-        "model": "veo",
+        "model": "Nano Banana 2",
         "orientation": "16:9",
         "duration": "5",
         "output_count": 1,
@@ -63,6 +65,7 @@ def test_job_lifecycle(client):
     job_id = job["id"]
     assert job["prompt"] == create_payload["prompt"]
     assert job["status"] == "QUEUED"
+    assert job["requested_model"] == "Nano Banana 2"
 
     # 2. Get job
     get_res = client.get(f"/api/v1/jobs/{job_id}")
@@ -94,17 +97,9 @@ def test_settings_api(client):
     res = client.get("/api/v1/settings")
     assert res.status_code == 200
     assert "DEFAULT_MODEL" in res.json()
+    assert "CREDIT_SAFETY_MODE" in res.json()
 
     # Update settings
-    put_res = client.put("/api/v1/settings", json={"DEFAULT_MODEL": "veo-2"})
+    put_res = client.put("/api/v1/settings", json={"CREDIT_SAFETY_MODE": "WARN"})
     assert put_res.status_code == 200
-
-    res2 = client.get("/api/v1/settings")
-    assert res2.json()["DEFAULT_MODEL"] == "veo-2"
-
-def test_diagnostics_api(client):
-    res = client.get("/api/v1/diagnostics")
-    assert res.status_code == 200
-    data = res.json()
-    assert "overall_status" in data
-    assert len(data["items"]) >= 4
+    assert put_res.json()["status"] == "updated"

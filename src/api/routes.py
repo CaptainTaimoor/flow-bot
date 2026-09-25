@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from datetime import datetime
+import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import FileResponse, StreamingResponse
@@ -22,12 +23,16 @@ from src.models.domain import (
     DiagnosticsReport,
     DiagnosticItem,
     JobStatus,
+    AuthState,
 )
 from src.api.events import event_broadcaster
 from src.media.service import media_service
 from src.config.settings import settings
-from src.browser.manager import BrowserManager
+from src.config.runtime_config import runtime_config
+from src.browser.service import browser_service
 from src.flow.auth import AuthManager
+from src.flow.adapter import GoogleFlowAdapter
+from src.jobs.runner import job_runner
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1")
@@ -42,44 +47,68 @@ def health_check():
 def system_status(db: Session = Depends(get_db)):
     repo = Repository(db)
     stats = repo.get_stats()
+    b_status = browser_service.get_status()
+    cfg = runtime_config.get_all()
     return {
         "status": "online",
         "app_env": settings.APP_ENV,
-        "headless": settings.HEADLESS,
+        "headless": cfg.get("HEADLESS", False),
+        "credit_safety_mode": cfg.get("CREDIT_SAFETY_MODE", "STRICT"),
+        "browser": b_status,
         "stats": stats,
     }
 
 @router.get("/auth/status")
 async def auth_status():
-    bm = BrowserManager()
-    status_val = "UNKNOWN"
+    status_val = AuthState.UNKNOWN.value
     try:
-        if bm.context:
-            page = await bm.get_page()
-            status_val = await AuthManager.check_auth_status(page)
+        if browser_service.context:
+            async with browser_service.lease_page() as page:
+                status_val = await AuthManager.check_auth_status(page)
     except Exception as e:
-        logger.warning(f"Auth check note: {e}")
+        logger.warning(f"Auth check status note: {e}")
     return {"status": status_val}
 
 @router.get("/browser/status")
-def browser_status():
-    bm = BrowserManager()
-    return bm.get_status()
+def get_browser_status():
+    return browser_service.get_status()
 
 @router.get("/capabilities", response_model=FlowCapabilities)
 async def get_capabilities():
-    # Return detected capabilities or defaults
+    """
+    Truthful capability discovery endpoint.
+    Queries the live Flow DOM when browser context is available.
+    Never invents credit balances or hardcodes model availability.
+    """
+    if browser_service.context:
+        try:
+            async with browser_service.lease_page() as page:
+                adapter = GoogleFlowAdapter(page)
+                return await adapter.detect_capabilities()
+        except Exception as e:
+            logger.warning(f"Live capability query failed: {e}")
+
+    # Truthful offline/unverified fallback
     return FlowCapabilities(
         flow_available=True,
-        authenticated=True,
-        agent_available=True,
+        authenticated=False,
+        auth_state=AuthState.UNKNOWN.value,
+        agent_available=False,
         standard_generation=True,
-        models_available=["veo", "veo-2"],
-        orientations=["16:9", "9:16"],
+        models_available=["Nano Banana 2", "Gemini Omni Flash"],
+        active_model="Nano Banana 2",
+        model_source="fallback",
+        orientations=["16:9", "9:16", "1:1"],
         durations=["5", "8"],
+        output_counts=[1, 2, 4],
         max_outputs=4,
-        credit_balance=1035, # Last verified live balance
-        credit_info_text="1,035 Google Flow credits",
+        credit_balance=None,
+        credit_status="UNKNOWN",
+        credit_info_text="Balance unverified (browser session inactive)",
+        cost_per_job=None,
+        cost_status="UNKNOWN",
+        current_project=None,
+        last_checked=datetime.utcnow(),
     )
 
 # ==================== JOBS & QUEUE ====================
@@ -135,6 +164,8 @@ def retry_job(job_id: int, db: Session = Depends(get_db)):
 @router.post("/jobs/{job_id}/cancel", response_model=JobResponse)
 def cancel_job(job_id: int, db: Session = Depends(get_db)):
     repo = Repository(db)
+    # Signal runner if job is actively executing
+    job_runner.request_job_cancellation(job_id)
     job = repo.cancel_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -168,10 +199,7 @@ def get_asset(asset_id: int, db: Session = Depends(get_db)):
 
 @router.get("/assets/{asset_id}/stream")
 def stream_asset(asset_id: int, request: Request, db: Session = Depends(get_db)):
-    """
-    Streams the video with HTTP 206 Partial Content (Range Requests)
-    for seamless seeking, scrubbing, and responsive video playback.
-    """
+    """Streams video with HTTP 206 Partial Content Range Requests for scrub/seek."""
     repo = Repository(db)
     asset = repo.get_asset(asset_id)
     if not asset:
@@ -185,7 +213,6 @@ def stream_asset(asset_id: int, request: Request, db: Session = Depends(get_db))
     range_header = request.headers.get("Range")
 
     if range_header:
-        # Parse range header e.g. "bytes=0-1048575"
         match = re.search(r"bytes=(\d+)-(\d*)", range_header)
         if match:
             start = int(match.group(1))
@@ -212,7 +239,6 @@ def stream_asset(asset_id: int, request: Request, db: Session = Depends(get_db))
             }
             return StreamingResponse(range_generator(), status_code=206, headers=headers)
 
-    # Full file response if no Range requested
     headers = {
         "Accept-Ranges": "bytes",
         "Content-Length": str(file_size),
@@ -249,7 +275,6 @@ def get_thumbnail(asset_id: int, db: Session = Depends(get_db)):
         if thumb_path and thumb_path.exists():
             return FileResponse(thumb_path, media_type="image/jpeg")
 
-    # If no custom thumbnail, redirect or return 404
     raise HTTPException(status_code=404, detail="Thumbnail not available")
 
 # ==================== PROJECTS ====================
@@ -263,35 +288,14 @@ def list_projects(db: Session = Depends(get_db)):
 # ==================== SETTINGS ====================
 
 @router.get("/settings")
-def get_settings(db: Session = Depends(get_db)):
-    repo = Repository(db)
-    db_settings = repo.get_settings()
-    # Merge env settings with DB overrides
-    merged = {
-        "FLOW_URL": db_settings.get("FLOW_URL", settings.FLOW_URL),
-        "FLOW_GENERATION_MODE": db_settings.get("FLOW_GENERATION_MODE", settings.FLOW_GENERATION_MODE),
-        "FLOW_PROJECT_MODE": db_settings.get("FLOW_PROJECT_MODE", settings.FLOW_PROJECT_MODE),
-        "AUTO_CONFIRM_GENERATION": db_settings.get("AUTO_CONFIRM_GENERATION", str(settings.AUTO_CONFIRM_GENERATION)).lower() == "true",
-        "DEFAULT_MODEL": db_settings.get("DEFAULT_MODEL", settings.DEFAULT_MODEL),
-        "DEFAULT_ORIENTATION": db_settings.get("DEFAULT_ORIENTATION", settings.DEFAULT_ORIENTATION),
-        "DEFAULT_DURATION": db_settings.get("DEFAULT_DURATION", settings.DEFAULT_DURATION),
-        "DEFAULT_OUTPUTS": int(db_settings.get("DEFAULT_OUTPUTS", str(settings.DEFAULT_OUTPUTS))),
-        "MAX_GENERATIONS_PER_JOB": int(db_settings.get("MAX_GENERATIONS_PER_JOB", str(settings.MAX_GENERATIONS_PER_JOB))),
-        "MAX_GENERATIONS_PER_SESSION": int(db_settings.get("MAX_GENERATIONS_PER_SESSION", str(settings.MAX_GENERATIONS_PER_SESSION))),
-        "MAX_DAILY_GENERATIONS": int(db_settings.get("MAX_DAILY_GENERATIONS", str(settings.MAX_DAILY_GENERATIONS))),
-        "CONCURRENCY": int(db_settings.get("CONCURRENCY", str(settings.CONCURRENCY))),
-        "HEADLESS": db_settings.get("HEADLESS", str(settings.HEADLESS)).lower() == "true",
-        "GENERATION_TIMEOUT": int(db_settings.get("GENERATION_TIMEOUT", str(settings.GENERATION_TIMEOUT))),
-        "RETRY_COUNT": int(db_settings.get("RETRY_COUNT", str(settings.RETRY_COUNT))),
-    }
-    return merged
+def get_settings():
+    return runtime_config.get_all()
 
 @router.put("/settings")
-def update_settings(updates: Dict[str, Any], db: Session = Depends(get_db)):
-    repo = Repository(db)
-    for k, v in updates.items():
-        repo.set_setting(k, str(v))
-    return {"status": "updated", "count": len(updates)}
+def update_settings(updates: Dict[str, Any]):
+    count = runtime_config.set_many(updates)
+    event_broadcaster.publish("settings.updated", updates)
+    return {"status": "updated", "count": count}
 
 # ==================== DIAGNOSTICS ====================
 
@@ -299,7 +303,7 @@ def update_settings(updates: Dict[str, Any], db: Session = Depends(get_db)):
 def run_diagnostics(db: Session = Depends(get_db)):
     items: List[DiagnosticItem] = []
 
-    # 1. Application
+    # 1. Application Core
     items.append(DiagnosticItem(name="Application Core", status="PASS", message="Running Google Flow Automation Bot V2"))
 
     # 2. Database
@@ -317,34 +321,52 @@ def run_diagnostics(db: Session = Depends(get_db)):
     except Exception as e:
         items.append(DiagnosticItem(name="Media Storage", status="FAIL", message=str(e)))
 
-    # 4. Playwright & Browser
+    # 4. Playwright & Browser Profile
     try:
-        bm = BrowserManager()
-        items.append(DiagnosticItem(name="Playwright Profile", status="PASS", message=f"Configured ({settings.BROWSER_PROFILE_DIR})"))
+        b_status = browser_service.get_status()
+        items.append(
+            DiagnosticItem(
+                name="Playwright Profile",
+                status="PASS",
+                message=f"Configured ({b_status['profile_dir']})",
+                details=f"Active pages: {b_status['page_count']}, running: {b_status['running']}",
+            )
+        )
     except Exception as e:
         items.append(DiagnosticItem(name="Playwright Profile", status="WARN", message=str(e)))
 
-    # 5. FFmpeg
+    # 5. FFmpeg Binary
     try:
         import shutil
         ffmpeg_bin = shutil.which("ffmpeg")
         if ffmpeg_bin:
             items.append(DiagnosticItem(name="FFmpeg Binary", status="PASS", message=f"Installed at {ffmpeg_bin}"))
         else:
-            items.append(DiagnosticItem(name="FFmpeg Binary", status="WARN", message="Not found in PATH (thumbnails will be disabled)"))
+            items.append(DiagnosticItem(name="FFmpeg Binary", status="WARN", message="Not found on PATH (thumbnails disabled)"))
     except Exception as e:
         items.append(DiagnosticItem(name="FFmpeg Binary", status="WARN", message=str(e)))
 
-    # 6. FFprobe
+    # 6. FFprobe Binary
     try:
         import shutil
         ffprobe_bin = shutil.which("ffprobe")
         if ffprobe_bin:
             items.append(DiagnosticItem(name="FFprobe Binary", status="PASS", message=f"Installed at {ffprobe_bin}"))
         else:
-            items.append(DiagnosticItem(name="FFprobe Binary", status="WARN", message="Not found in PATH (basic file validation used)"))
+            items.append(DiagnosticItem(name="FFprobe Binary", status="WARN", message="Not found on PATH (basic file checks fallback)"))
     except Exception as e:
         items.append(DiagnosticItem(name="FFprobe Binary", status="WARN", message=str(e)))
+
+    # 7. Credit Safety Policy
+    mode = runtime_config.get("CREDIT_SAFETY_MODE", "STRICT")
+    daily_limit = runtime_config.get("MAX_DAILY_GENERATIONS", 20)
+    items.append(
+        DiagnosticItem(
+            name="Credit Safety Policy",
+            status="PASS",
+            message=f"Mode: {mode} (Daily limit: {daily_limit})",
+        )
+    )
 
     has_fail = any(i.status == "FAIL" for i in items)
     return DiagnosticsReport(
@@ -356,12 +378,15 @@ def run_diagnostics(db: Session = Depends(get_db)):
 
 @router.get("/events")
 async def sse_events():
-    """Server-Sent Events endpoint for immediate live updates."""
+    """Server-Sent Events endpoint with keepalive heartbeat."""
     async def event_generator():
-        # Send initial ping
         yield f"event: connected\ndata: {json.dumps({'message': 'Connected to Flow Bot SSE stream'})}\n\n"
-        async for msg in event_broadcaster.subscribe():
-            yield f"event: {msg['type']}\ndata: {json.dumps(msg['data'])}\n\n"
+        queue_sub = event_broadcaster.subscribe()
+        try:
+            async for msg in queue_sub:
+                yield f"event: {msg['type']}\ndata: {json.dumps(msg['data'])}\n\n"
+        except asyncio.CancelledError:
+            pass
 
     return StreamingResponse(
         event_generator(),

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Sparkles,
   Sliders,
@@ -6,11 +6,10 @@ import {
   Clock,
   Layers,
   Bot,
-  FolderPlus,
   Coins,
-  Copy,
   Trash2,
-  HelpCircle,
+  AlertTriangle,
+  CheckCircle2,
 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
@@ -18,18 +17,19 @@ import { api } from '../api/client';
 interface CreateVideoPageProps {
   onSubmit: (jobData: {
     prompt: string;
-    model: string;
-    orientation: string;
-    duration: string;
-    output_count: number;
-    generation_mode: string;
+    model?: string;
+    orientation?: string;
+    duration?: string;
+    output_count?: number;
+    generation_mode?: string;
     project?: string;
+    allow_unverified_credits?: boolean;
   }) => void;
   initialPrompt?: string;
 }
 
 const EXAMPLE_PROMPTS = [
-  "A cinematic landscape shot of a peaceful mountain lake at sunrise, realistic lighting, slow camera movement.",
+  "A cinematic landscape of a peaceful mountain lake at sunrise, realistic lighting, gentle camera movement.",
   "A futuristic cyberpunk street corner at night, vibrant neon signs reflecting in puddles, cinematic mist.",
   "Slow motion macro shot of raindrops landing on green tropical monstera leaf, photorealistic 8k.",
   "An aerial drone shot gliding across golden sand dunes in the Sahara desert at dusk, warm glow.",
@@ -40,17 +40,24 @@ export const CreateVideoPage: React.FC<CreateVideoPageProps> = ({
   initialPrompt = '',
 }) => {
   const [prompt, setPrompt] = useState(initialPrompt);
-  const [model, setModel] = useState('veo');
+  const [model, setModel] = useState('');
   const [orientation, setOrientation] = useState('16:9');
   const [duration, setDuration] = useState('5');
   const [outputCount, setOutputCount] = useState(1);
   const [generationMode, setGenerationMode] = useState('STANDARD');
-  const [projectStrategy, setProjectStrategy] = useState('REUSE_SINGLE_PROJECT');
+  const [allowUnverifiedCredits, setAllowUnverifiedCredits] = useState(false);
 
   const { data: caps } = useQuery({
     queryKey: ['capabilities'],
     queryFn: api.getCapabilities,
   });
+
+  // Automatically sync model with live discovered active model
+  useEffect(() => {
+    if (caps?.models_available && caps.models_available.length > 0 && !model) {
+      setModel(caps.active_model || caps.models_available[0]);
+    }
+  }, [caps, model]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -58,15 +65,22 @@ export const CreateVideoPage: React.FC<CreateVideoPageProps> = ({
 
     onSubmit({
       prompt: prompt.trim(),
-      model,
+      model: model || undefined,
       orientation,
       duration,
       output_count: outputCount,
       generation_mode: generationMode,
+      allow_unverified_credits: allowUnverifiedCredits,
     });
   };
 
-  const estimatedCredits = outputCount * 15;
+  const isCostVerified = caps?.cost_status === 'VERIFIED' && caps?.cost_per_job !== undefined && caps?.cost_per_job !== null;
+  const isBalanceVerified = caps?.credit_status === 'VERIFIED' && caps?.credit_balance !== undefined && caps?.credit_balance !== null;
+  const verifiedCost = isCostVerified ? (caps!.cost_per_job! * outputCount) : null;
+
+  const availableModels = caps?.models_available && caps.models_available.length > 0
+    ? caps.models_available
+    : ['Nano Banana 2', 'Gemini Omni Flash'];
 
   return (
     <div className="max-w-6xl mx-auto space-y-8 animate-fade-in">
@@ -151,20 +165,28 @@ export const CreateVideoPage: React.FC<CreateVideoPageProps> = ({
 
             {/* Model Selector */}
             <div className="space-y-2">
-              <label className="text-xs font-medium text-slate-300">Video Model</label>
-              <div className="grid grid-cols-2 gap-2">
-                {['veo', 'veo-2'].map((m) => (
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-medium text-slate-300">Live Flow Model</label>
+                {caps?.model_source === 'live' && (
+                  <span className="text-[10px] text-emerald-400 font-mono flex items-center space-x-1">
+                    <CheckCircle2 className="w-3 h-3 inline" />
+                    <span>Live UI Verified</span>
+                  </span>
+                )}
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {availableModels.map((m) => (
                   <button
                     key={m}
                     type="button"
                     onClick={() => setModel(m)}
-                    className={`py-2 px-3 rounded-xl text-xs font-medium border transition-all ${
+                    className={`py-2 px-3 rounded-xl text-xs font-medium border text-left truncate transition-all ${
                       model === m
                         ? 'bg-brand-600/20 border-brand-500 text-brand-300'
                         : 'bg-studio-950 border-slate-800 text-slate-400 hover:text-slate-200'
                     }`}
                   >
-                    {m.toUpperCase()}
+                    {m}
                   </button>
                 ))}
               </div>
@@ -177,21 +199,18 @@ export const CreateVideoPage: React.FC<CreateVideoPageProps> = ({
                 <span>Aspect Ratio</span>
               </label>
               <div className="grid grid-cols-2 gap-2">
-                {[
-                  { id: '16:9', label: '16:9 Landscape' },
-                  { id: '9:16', label: '9:16 Portrait' },
-                ].map((item) => (
+                {(caps?.orientations || ['16:9', '9:16']).map((item) => (
                   <button
-                    key={item.id}
+                    key={item}
                     type="button"
-                    onClick={() => setOrientation(item.id)}
+                    onClick={() => setOrientation(item)}
                     className={`py-2 px-3 rounded-xl text-xs font-medium border transition-all ${
-                      orientation === item.id
+                      orientation === item
                         ? 'bg-brand-600/20 border-brand-500 text-brand-300'
                         : 'bg-studio-950 border-slate-800 text-slate-400 hover:text-slate-200'
                     }`}
                   >
-                    {item.label}
+                    {item === '16:9' ? '16:9 Landscape' : item === '9:16' ? '9:16 Portrait' : item}
                   </button>
                 ))}
               </div>
@@ -204,7 +223,7 @@ export const CreateVideoPage: React.FC<CreateVideoPageProps> = ({
                 <span>Clip Duration</span>
               </label>
               <div className="grid grid-cols-2 gap-2">
-                {['5', '8'].map((d) => (
+                {(caps?.durations || ['5', '8']).map((d) => (
                   <button
                     key={d}
                     type="button"
@@ -248,18 +267,37 @@ export const CreateVideoPage: React.FC<CreateVideoPageProps> = ({
               </div>
             </div>
 
-            {/* Credit Safety Calculation */}
-            <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 space-y-1.5">
+            {/* Truthful Credit Cost Panel */}
+            <div className="p-3.5 rounded-xl bg-studio-950 border border-slate-800 space-y-2">
               <div className="flex items-center justify-between text-xs">
-                <span className="text-amber-300 font-medium flex items-center space-x-1">
-                  <Coins className="w-3.5 h-3.5" />
-                  <span>Estimated Credit Cost</span>
+                <span className="text-slate-300 font-medium flex items-center space-x-1">
+                  <Coins className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Verified Credit Cost</span>
                 </span>
-                <span className="font-mono font-bold text-amber-200">~{estimatedCredits} Credits</span>
+                <span className="font-mono font-bold text-slate-100">
+                  {isCostVerified ? `${verifiedCost} Credits` : 'UNKNOWN'}
+                </span>
               </div>
-              <p className="text-[11px] text-amber-400/80">
-                Charged per generation by Google Flow (15 credits per standard video).
+              <p className="text-[11px] text-slate-400">
+                {isCostVerified
+                  ? `Google Flow charges ${caps?.cost_per_job} credits per video render.`
+                  : 'Flow credit cost is currently unverified from the active UI.'}
               </p>
+
+              {/* Unverified Balance Safety Option */}
+              {!isBalanceVerified && (
+                <div className="pt-2 border-t border-slate-800/80">
+                  <label className="flex items-start space-x-2 text-[11px] text-slate-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={allowUnverifiedCredits}
+                      onChange={(e) => setAllowUnverifiedCredits(e.target.checked)}
+                      className="mt-0.5 rounded border-slate-700 bg-studio-900 text-brand-500 focus:ring-0"
+                    />
+                    <span>Allow submission even if credit balance is UNKNOWN (bypasses strict check).</span>
+                  </label>
+                </div>
+              )}
             </div>
 
             {/* Submit Button */}

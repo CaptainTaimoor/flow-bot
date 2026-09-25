@@ -3,7 +3,14 @@ from typing import Optional, List, Dict, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
 from src.database.models import JobDB, GenerationDB, AssetDB, ProjectDB, EventDB, SettingDB
-from src.models.domain import JobCreate, JobStatus, GenerationState
+from src.models.domain import (
+    JobCreate,
+    JobStatus,
+    GenerationState,
+    normalize_aspect_ratio,
+    normalize_duration,
+    normalize_model_name,
+)
 
 class Repository:
     def __init__(self, db: Session):
@@ -12,21 +19,42 @@ class Repository:
     # ==================== JOBS ====================
 
     def create_job(self, job_data: JobCreate) -> JobDB:
+        norm_model = normalize_model_name(job_data.model)
+        norm_orientation = normalize_aspect_ratio(job_data.orientation)
+        norm_duration = normalize_duration(job_data.duration)
+        norm_count = job_data.output_count or 1
+
         job = JobDB(
             prompt=job_data.prompt,
             status=JobStatus.QUEUED.value,
-            model=job_data.model,
-            orientation=job_data.orientation,
-            duration=job_data.duration,
-            output_count=job_data.output_count or 1,
+            model=norm_model,
+            requested_model=norm_model,
+            effective_model=None, # Assigned when verified on Flow
+            orientation=norm_orientation,
+            requested_orientation=norm_orientation,
+            effective_orientation=None, # Assigned when verified on Flow
+            duration=norm_duration,
+            requested_duration=norm_duration,
+            effective_duration=None, # Assigned when verified on Flow
+            output_count=norm_count,
+            requested_output_count=norm_count,
+            effective_output_count=None,
             project=job_data.project,
             generation_mode=job_data.generation_mode or "STANDARD",
+            submission_confirmed=None,
+            credit_status="UNKNOWN",
+            verified_credit_cost=None,
             created_at=datetime.utcnow(),
         )
         self.db.add(job)
         self.db.commit()
         self.db.refresh(job)
-        self.record_event(job.id, "job.created", {"status": job.status, "prompt": job.prompt})
+        self.record_event(job.id, "job.created", {
+            "status": job.status,
+            "prompt": job.prompt,
+            "requested_model": norm_model,
+            "requested_orientation": norm_orientation,
+        })
         return job
 
     def get_job(self, job_id: int) -> Optional[JobDB]:
@@ -45,7 +73,7 @@ class Repository:
         if status:
             q = q.filter(JobDB.status == status)
         if model:
-            q = q.filter(JobDB.model == model)
+            q = q.filter((JobDB.model == model) | (JobDB.effective_model == model))
         if project:
             q = q.filter(JobDB.project == project)
         if search:
@@ -62,6 +90,52 @@ class Repository:
 
     def count_active_jobs(self) -> int:
         return self.db.query(JobDB).filter(JobDB.status == JobStatus.RUNNING.value).count()
+
+    def update_job_effective_config(
+        self,
+        job_id: int,
+        effective_model: Optional[str] = None,
+        effective_orientation: Optional[str] = None,
+        effective_duration: Optional[str] = None,
+        effective_output_count: Optional[int] = None,
+    ) -> Optional[JobDB]:
+        job = self.get_job(job_id)
+        if not job:
+            return None
+        if effective_model is not None:
+            job.effective_model = effective_model
+            job.model = effective_model
+        if effective_orientation is not None:
+            job.effective_orientation = effective_orientation
+            job.orientation = effective_orientation
+        if effective_duration is not None:
+            job.effective_duration = effective_duration
+            job.duration = effective_duration
+        if effective_output_count is not None:
+            job.effective_output_count = effective_output_count
+            job.output_count = effective_output_count
+        self.db.commit()
+        self.db.refresh(job)
+        return job
+
+    def update_job_submission(
+        self,
+        job_id: int,
+        confirmed: bool,
+        credit_status: Optional[str] = None,
+        verified_cost: Optional[int] = None,
+    ) -> Optional[JobDB]:
+        job = self.get_job(job_id)
+        if not job:
+            return None
+        job.submission_confirmed = confirmed
+        if credit_status:
+            job.credit_status = credit_status
+        if verified_cost is not None:
+            job.verified_credit_cost = verified_cost
+        self.db.commit()
+        self.db.refresh(job)
+        return job
 
     def update_job_status(
         self,
@@ -118,10 +192,10 @@ class Repository:
             return None
         new_job = JobCreate(
             prompt=orig.prompt,
-            model=orig.model,
-            orientation=orig.orientation,
-            duration=orig.duration,
-            output_count=orig.output_count,
+            model=orig.requested_model or orig.model,
+            orientation=orig.requested_orientation or orig.orientation,
+            duration=orig.requested_duration or orig.duration,
+            output_count=orig.requested_output_count or orig.output_count,
             project=orig.project,
             generation_mode=orig.generation_mode,
         )
@@ -148,6 +222,10 @@ class Repository:
         flow_project_id: Optional[str] = None,
         flow_asset_id: Optional[str] = None,
         credit_cost: Optional[int] = None,
+        submission_confirmed: Optional[bool] = None,
+        submission_proof: Optional[Dict[str, Any]] = None,
+        correlation_confidence: Optional[str] = None,
+        correlation_evidence: Optional[Dict[str, Any]] = None,
         error_message: Optional[str] = None,
     ) -> Optional[GenerationDB]:
         gen = self.db.query(GenerationDB).filter(GenerationDB.id == gen_id).first()
@@ -161,9 +239,17 @@ class Repository:
             gen.flow_asset_id = flow_asset_id
         if credit_cost is not None:
             gen.credit_cost = credit_cost
+        if submission_confirmed is not None:
+            gen.submission_confirmed = submission_confirmed
+        if submission_proof is not None:
+            gen.submission_proof = submission_proof
+        if correlation_confidence is not None:
+            gen.correlation_confidence = correlation_confidence
+        if correlation_evidence is not None:
+            gen.correlation_evidence = correlation_evidence
         if error_message:
             gen.error_message = error_message
-        if state in (GenerationState.SUCCESS, GenerationState.FAILED, GenerationState.CANCELLED):
+        if state in (GenerationState.SUCCESS, GenerationState.FAILED, GenerationState.CANCELLED, GenerationState.COMPLETED):
             gen.completed_at = datetime.utcnow()
 
         self.db.commit()
@@ -172,6 +258,8 @@ class Repository:
             "generation_id": gen.id,
             "state": gen.state,
             "flow_asset_id": flow_asset_id,
+            "submission_confirmed": submission_confirmed,
+            "correlation_confidence": correlation_confidence,
             "error": error_message,
         })
         return gen
@@ -191,6 +279,12 @@ class Repository:
         duration: Optional[float] = None,
         width: Optional[int] = None,
         height: Optional[int] = None,
+        video_codec: Optional[str] = None,
+        audio_codec: Optional[str] = None,
+        fps: Optional[float] = None,
+        correlation_confidence: Optional[str] = None,
+        correlation_evidence: Optional[Dict[str, Any]] = None,
+        ffprobe_metadata: Optional[Dict[str, Any]] = None,
     ) -> AssetDB:
         asset = AssetDB(
             job_id=job_id,
@@ -204,12 +298,22 @@ class Repository:
             duration=duration,
             width=width,
             height=height,
+            video_codec=video_codec,
+            audio_codec=audio_codec,
+            fps=fps,
+            correlation_confidence=correlation_confidence,
+            correlation_evidence=correlation_evidence,
+            ffprobe_metadata=ffprobe_metadata,
             created_at=datetime.utcnow(),
         )
         self.db.add(asset)
         self.db.commit()
         self.db.refresh(asset)
-        self.record_event(job_id, "asset.created", {"asset_id": asset.id, "filename": filename})
+        self.record_event(job_id, "asset.created", {
+            "asset_id": asset.id,
+            "filename": filename,
+            "correlation_confidence": correlation_confidence,
+        })
         return asset
 
     def get_asset(self, asset_id: int) -> Optional[AssetDB]:
@@ -267,7 +371,15 @@ class Repository:
             q = q.filter(EventDB.job_id == job_id)
         return q.order_by(desc(EventDB.created_at)).limit(limit).all()
 
-    # ==================== STATS ====================
+    # ==================== STATS & COUNTS ====================
+
+    def get_daily_generation_count(self) -> int:
+        today_start = datetime.combine(date.today(), datetime.min.time())
+        return (
+            self.db.query(JobDB)
+            .filter(JobDB.created_at >= today_start, JobDB.status.in_([JobStatus.RUNNING.value, JobStatus.SUCCESS.value]))
+            .count()
+        )
 
     def get_stats(self) -> Dict[str, int]:
         today_start = datetime.combine(date.today(), datetime.min.time())

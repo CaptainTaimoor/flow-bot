@@ -1,16 +1,17 @@
 import os
 import logging
 import asyncio
-from typing import Optional, Set, Callable
+from typing import Optional, Set, Callable, Tuple, Dict, Any
 from playwright.async_api import Page, Locator
 from src.config.settings import settings
-from src.models.domain import JobCreate, FlowCapabilities
+from src.config.runtime_config import runtime_config
+from src.models.domain import JobCreate, FlowCapabilities, CorrelationConfidence
 from src.flow.selectors import FlowSelectors
 from src.flow.capability_detection import FlowCapabilityDetector
 from src.flow.projects import FlowProjectManager
 from src.flow.assets import FlowAssetTracker
 from src.flow.generation import FlowGenerationExecutor
-from src.flow.auth import AuthManager
+from src.flow.reconciliation import FlowReconciliationManager
 
 logger = logging.getLogger(__name__)
 
@@ -22,40 +23,71 @@ class GoogleFlowAdapter:
         self.project_manager = FlowProjectManager(page)
         self.asset_tracker = FlowAssetTracker(page)
         self.generation_executor = FlowGenerationExecutor(page)
+        self.reconciliation_manager = FlowReconciliationManager(page)
         self._baseline_assets: Set[str] = set()
 
     async def open_flow(self):
-        """Navigates to Flow and enters the project workspace."""
-        logger.info(f"Navigating to Flow: {settings.FLOW_URL}...")
-        await self.page.goto(settings.FLOW_URL, wait_until="domcontentloaded")
-        await asyncio.sleep(4)
+        """Navigates to Flow, dismisses onboarding overlays, and enters the project workspace."""
+        flow_url = runtime_config.get("FLOW_URL", settings.FLOW_URL)
+        logger.info(f"Navigating to Flow: {flow_url}...")
+        await self.page.goto(flow_url, wait_until="domcontentloaded")
+        await asyncio.sleep(3)
+        await FlowCapabilityDetector.dismiss_transient_modals(self.page)
         await self.project_manager.ensure_project_open()
+        await FlowCapabilityDetector.dismiss_transient_modals(self.page)
 
     async def detect_capabilities(self) -> FlowCapabilities:
-        """Inspects and returns the live capabilities of the current Flow UI."""
+        """Inspects and returns the truthful capabilities of the current Flow UI."""
         return await FlowCapabilityDetector.detect_capabilities(self.page)
+
+    async def reconcile_prior_submission(
+        self, prompt: str
+    ) -> Tuple[bool, Optional[Locator], Dict[str, Any]]:
+        """Checks if generation is already running or completed on canvas."""
+        return await self.reconciliation_manager.reconcile_prior_submission(
+            prompt, self._baseline_assets
+        )
+
+    async def select_parameters(self, job: JobCreate) -> Dict[str, Any]:
+        """Configures model, aspect ratio, and output count in the Flow prompt bar."""
+        return await self.generation_executor.select_parameters(job)
 
     async def prepare_for_submission(self) -> Set[str]:
         """Snapshots existing assets prior to prompt submission for correlation."""
         self._baseline_assets = await self.asset_tracker.snapshot_existing_assets()
         return self._baseline_assets
 
-    async def submit_prompt(self, job: JobCreate) -> bool:
-        """Submits the prompt into the workspace and auto-approves credit prompts."""
+    async def submit_prompt(self, job: JobCreate) -> Tuple[bool, Dict[str, Any]]:
+        """Submits the prompt into the workspace and handles confirmation."""
+        auto_confirm = runtime_config.get("AUTO_CONFIRM_GENERATION", settings.AUTO_CONFIRM_GENERATION)
         return await self.generation_executor.submit_prompt_and_confirm(
             prompt=job.prompt,
-            auto_confirm=settings.AUTO_CONFIRM_GENERATION,
+            auto_confirm=auto_confirm,
         )
 
-    async def locate_generated_tile(self, prompt: str, timeout_seconds: int = 45) -> Optional[Locator]:
-        """Polls for the newly created tile on the canvas matching the current generation."""
+    async def locate_generated_tile(
+        self, prompt: str, timeout_seconds: int = 45
+    ) -> Tuple[Optional[Locator], CorrelationConfidence, Dict[str, Any]]:
+        """
+        Polls for the newly created tile on the canvas matching the current generation.
+        Returns (tile, confidence, evidence).
+        """
         start_time = asyncio.get_event_loop().time()
+        last_evidence = {}
         while asyncio.get_event_loop().time() - start_time < timeout_seconds:
-            tile = await self.asset_tracker.find_new_asset_tile(self._baseline_assets, prompt)
-            if tile:
-                return tile
-            await asyncio.sleep(4)
-        return None
+            tile, conf, evidence = await self.asset_tracker.find_new_asset_tile(
+                self._baseline_assets, prompt
+            )
+            last_evidence = evidence
+            if tile and conf in (CorrelationConfidence.HIGH, CorrelationConfidence.MEDIUM):
+                return tile, conf, evidence
+            await asyncio.sleep(3)
+
+        # Final check if low confidence is present
+        tile, conf, evidence = await self.asset_tracker.find_new_asset_tile(
+            self._baseline_assets, prompt
+        )
+        return tile, conf, evidence or last_evidence
 
     async def wait_for_completion(
         self,
@@ -63,25 +95,26 @@ class GoogleFlowAdapter:
         progress_callback: Optional[Callable[[Optional[int], str], None]] = None,
     ) -> bool:
         """Waits for generation to complete on the tile or general workspace."""
+        gen_timeout = runtime_config.get("GENERATION_TIMEOUT", settings.GENERATION_TIMEOUT)
         if tile:
             return await self.generation_executor.wait_for_tile_completion(
                 tile=tile,
-                timeout_seconds=settings.GENERATION_TIMEOUT,
+                timeout_seconds=gen_timeout,
                 progress_callback=progress_callback,
             )
 
-        # Fallback if specific tile handle wasn't isolated
+        # Resilient fallback if specific tile handle wasn't isolated
         logger.info("Monitoring general workspace for completion...")
         start_time = asyncio.get_event_loop().time()
-        while asyncio.get_event_loop().time() - start_time < settings.GENERATION_TIMEOUT:
+        while asyncio.get_event_loop().time() - start_time < gen_timeout:
             tiles = await self.page.locator(FlowSelectors.VIDEO_TILE).all()
             if tiles:
                 pb = tiles[0].locator(FlowSelectors.TILE_PROGRESS_BAR).first
-                if await pb.count() == 0:
+                if await pb.count() == 0 or not await pb.is_visible():
                     if progress_callback:
                         progress_callback(100, "Rendering complete")
                     return True
-            await asyncio.sleep(8)
+            await asyncio.sleep(6)
 
         return False
 
@@ -97,18 +130,35 @@ class GoogleFlowAdapter:
             if downloaded:
                 return downloaded
 
-        # Fallback to direct download button
-        dl_btn = self.page.locator(FlowSelectors.DOWNLOAD_BUTTONS).first
-        if await dl_btn.count() > 0 and await dl_btn.is_visible():
-            logger.info("Attempting direct download button fallback...")
+        # Resilient fallback: close any open menus and locate completed valid tile
+        logger.info("Target tile download unverified; attempting fallback to latest completed tile...")
+        try:
+            await self.page.keyboard.press("Escape")
+            await asyncio.sleep(0.5)
+            await self.page.keyboard.press("Escape")
+            await asyncio.sleep(0.5)
+        except Exception:
+            pass
+
+        tiles = await self.page.locator(FlowSelectors.VIDEO_TILE).all()
+        for idx, t in enumerate(tiles):
             try:
-                os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-                async with self.page.expect_download(timeout=25000) as dl_info:
-                    await dl_btn.click()
-                dl = await dl_info.value
-                await dl.save_as(dest_path)
-                return dest_path
-            except Exception as e:
-                logger.error(f"Fallback download failed: {e}")
+                # Skip failed tiles
+                failed = t.locator(":text-matches('error|failed', 'i')").first
+                if await failed.count() > 0 and await failed.is_visible():
+                    continue
+
+                play = t.locator(FlowSelectors.PLAY_CIRCLE_ICON).first
+                if await play.count() > 0 and await play.is_visible():
+                    logger.info(f"Fallback downloading from completed tile index {idx}...")
+                    downloaded = await self.asset_tracker.download_tile_asset(t, dest_path)
+                    if downloaded:
+                        return downloaded
+            except Exception:
+                continue
 
         return None
+
+    async def cancel_active_generation(self, target_tile: Optional[Locator] = None) -> Tuple[bool, str]:
+        """Attempts to cancel generation on Google Flow UI."""
+        return await self.reconciliation_manager.attempt_cancellation(target_tile)

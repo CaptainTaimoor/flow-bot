@@ -54,6 +54,7 @@ export const api = {
     output_count?: number;
     project?: string;
     generation_mode?: string;
+    allow_unverified_credits?: boolean;
   }) => request<Job>('/jobs', { method: 'POST', body: JSON.stringify(payload) }),
   retryJob: (id: number) => request<Job>(`/jobs/${id}/retry`, { method: 'POST' }),
   cancelJob: (id: number) => request<Job>(`/jobs/${id}/cancel`, { method: 'POST' }),

@@ -6,6 +6,7 @@ from sqlalchemy import (
     Float,
     Text,
     DateTime,
+    Boolean,
     ForeignKey,
     JSON,
 )
@@ -20,12 +21,30 @@ class JobDB(Base):
     prompt = Column(Text, nullable=False)
     status = Column(String(32), default="QUEUED", index=True)
 
+    # Requested vs Effective configuration
     model = Column(String(64), nullable=True)
+    requested_model = Column(String(64), nullable=True)
+    effective_model = Column(String(64), nullable=True)
+
     orientation = Column(String(32), nullable=True)
+    requested_orientation = Column(String(32), nullable=True)
+    effective_orientation = Column(String(32), nullable=True)
+
     duration = Column(String(32), nullable=True)
+    requested_duration = Column(String(32), nullable=True)
+    effective_duration = Column(String(32), nullable=True)
+
     output_count = Column(Integer, default=1)
+    requested_output_count = Column(Integer, default=1)
+    effective_output_count = Column(Integer, default=1)
+
     project = Column(String(128), nullable=True)
     generation_mode = Column(String(32), default="STANDARD")
+
+    # Audit & Truthfulness
+    submission_confirmed = Column(Boolean, nullable=True)
+    credit_status = Column(String(32), default="UNKNOWN")
+    verified_credit_cost = Column(Integer, nullable=True)
 
     retry_count = Column(Integer, default=0)
     error_message = Column(Text, nullable=True)
@@ -55,6 +74,13 @@ class GenerationDB(Base):
     flow_asset_id = Column(String(128), nullable=True)
     model = Column(String(64), nullable=True)
     credit_cost = Column(Integer, nullable=True)
+
+    # Submission & Correlation audit
+    submission_confirmed = Column(Boolean, nullable=True)
+    submission_proof = Column(JSON, nullable=True)
+    correlation_confidence = Column(String(32), nullable=True)
+    correlation_evidence = Column(JSON, nullable=True)
+
     error_message = Column(Text, nullable=True)
 
     started_at = Column(DateTime, default=datetime.utcnow)
@@ -80,6 +106,14 @@ class AssetDB(Base):
     duration = Column(Float, nullable=True)
     width = Column(Integer, nullable=True)
     height = Column(Integer, nullable=True)
+
+    video_codec = Column(String(32), nullable=True)
+    audio_codec = Column(String(32), nullable=True)
+    fps = Column(Float, nullable=True)
+
+    correlation_confidence = Column(String(32), nullable=True)
+    correlation_evidence = Column(JSON, nullable=True)
+    ffprobe_metadata = Column(JSON, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
