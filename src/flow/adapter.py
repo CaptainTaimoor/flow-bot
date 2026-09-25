@@ -10,7 +10,7 @@ from src.flow.selectors import FlowSelectors
 from src.flow.capability_detection import FlowCapabilityDetector
 from src.flow.projects import FlowProjectManager
 from src.flow.assets import FlowAssetTracker
-from src.flow.generation import FlowGenerationExecutor
+from src.flow.generation import FlowGenerationExecutor, sanitize_prompt
 from src.flow.reconciliation import FlowReconciliationManager
 
 logger = logging.getLogger(__name__)
@@ -52,8 +52,13 @@ class GoogleFlowAdapter:
         """Configures model, aspect ratio, and output count in the Flow prompt bar."""
         return await self.generation_executor.select_parameters(job)
 
+    async def cleanup_failed_tiles(self) -> int:
+        """Deletes any lingering failed error tiles from the canvas."""
+        return await self.asset_tracker.cleanup_failed_tiles()
+
     async def prepare_for_submission(self) -> Set[str]:
-        """Snapshots existing assets prior to prompt submission for correlation."""
+        """Cleans lingering failed tiles and snapshots existing assets prior to prompt submission."""
+        await self.asset_tracker.cleanup_failed_tiles()
         self._baseline_assets = await self.asset_tracker.snapshot_existing_assets()
         return self._baseline_assets
 
@@ -66,17 +71,18 @@ class GoogleFlowAdapter:
         )
 
     async def locate_generated_tile(
-        self, prompt: str, timeout_seconds: int = 45
+        self, prompt: str, timeout_seconds: int = 60
     ) -> Tuple[Optional[Locator], CorrelationConfidence, Dict[str, Any]]:
         """
         Polls for the newly created tile on the canvas matching the current generation.
         Returns (tile, confidence, evidence).
         """
+        clean_prompt = sanitize_prompt(prompt)
         start_time = asyncio.get_event_loop().time()
         last_evidence = {}
         while asyncio.get_event_loop().time() - start_time < timeout_seconds:
             tile, conf, evidence = await self.asset_tracker.find_new_asset_tile(
-                self._baseline_assets, prompt
+                self._baseline_assets, clean_prompt
             )
             last_evidence = evidence
             if tile and conf in (CorrelationConfidence.HIGH, CorrelationConfidence.MEDIUM):
@@ -85,7 +91,7 @@ class GoogleFlowAdapter:
 
         # Final check if low confidence is present
         tile, conf, evidence = await self.asset_tracker.find_new_asset_tile(
-            self._baseline_assets, prompt
+            self._baseline_assets, clean_prompt
         )
         return tile, conf, evidence or last_evidence
 

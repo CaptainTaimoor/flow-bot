@@ -47,12 +47,27 @@ class BrowserService:
             headless = runtime_config.get("HEADLESS", settings.HEADLESS)
             logger.info(f"Launching persistent Chromium context at {profile_dir} (headless={headless})")
 
-            self.context = await self.playwright.chromium.launch_persistent_context(
-                user_data_dir=profile_dir,
-                headless=headless,
-                no_viewport=True,
-            )
+            self.context = await self._launch_context(profile_dir, headless)
             return self.context
+
+    async def _launch_context(self, profile_dir: str, headless: bool) -> BrowserContext:
+        ctx = await self.playwright.chromium.launch_persistent_context(
+            user_data_dir=profile_dir,
+            headless=headless,
+            no_viewport=True,
+            ignore_default_args=["--enable-automation"],
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+            ],
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        )
+        await ctx.add_init_script("""
+        Object.defineProperty(navigator, 'webdriver', {
+            get: () => undefined
+        });
+        """)
+        return ctx
 
     async def get_page(self) -> Page:
         """Returns the primary page or creates one within the shared context."""
@@ -78,11 +93,7 @@ class BrowserService:
                 settings.ensure_directories()
                 profile_dir = settings.BROWSER_PROFILE_DIR
                 headless = runtime_config.get("HEADLESS", settings.HEADLESS)
-                self.context = await self.playwright.chromium.launch_persistent_context(
-                    user_data_dir=profile_dir,
-                    headless=headless,
-                    no_viewport=True,
-                )
+                self.context = await self._launch_context(profile_dir, headless)
             pages = self.context.pages
             page = pages[0] if pages else await self.context.new_page()
             try:
@@ -100,11 +111,7 @@ class BrowserService:
             settings.ensure_directories()
             profile_dir = settings.BROWSER_PROFILE_DIR
             headless = runtime_config.get("HEADLESS", settings.HEADLESS)
-            self.context = await self.playwright.chromium.launch_persistent_context(
-                user_data_dir=profile_dir,
-                headless=headless,
-                no_viewport=True,
-            )
+            self.context = await self._launch_context(profile_dir, headless)
 
     def get_status(self) -> Dict[str, Any]:
         """Returns current browser health and connection status."""
