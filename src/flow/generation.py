@@ -119,12 +119,17 @@ class FlowGenerationExecutor:
                     effective["effective_model"] = clean_cur
 
             # 7. Select Duration (4s, 6s, 8s, 10s) inside overlay
-            dur_btn = overlay.locator(f"mat-button-toggle:has-text('{target_dur}s')").first
-            if await dur_btn.count() > 0 and await dur_btn.is_visible():
-                logger.info(f"Selecting video duration: {target_dur}s")
-                await dur_btn.click()
-                effective["effective_duration"] = target_dur
-                await asyncio.sleep(0.3)
+            chosen_model = effective.get("effective_model", target_model)
+            if "veo" in chosen_model.lower():
+                effective["effective_duration"] = "8"
+                logger.info(f"Veo model selected ('{chosen_model}'); native 8s clip duration preserved.")
+            else:
+                dur_btn = overlay.locator(f"mat-button-toggle:has-text('{target_dur}s')").first
+                if await dur_btn.count() > 0 and await dur_btn.is_visible():
+                    logger.info(f"Selecting video duration: {target_dur}s")
+                    await dur_btn.click()
+                    effective["effective_duration"] = target_dur
+                    await asyncio.sleep(0.3)
 
             # 8. Select Output Count (x1, x2, x3, x4) inside overlay
             count_btn = overlay.locator(f"mat-button-toggle:has-text('x{target_count}')").first

@@ -17,6 +17,36 @@ class CreditPolicyManager:
     - Pre-submission limit gates: Daily generations, session generations, max job cost.
     """
 
+    FLOW_RATES = {
+        "omni": {"4": 7, "6": 10, "8": 12, "10": 15},
+        "veo_lite": 10,
+        "veo_fast": 20,
+        "veo_quality": 100,
+    }
+
+    @classmethod
+    def get_expected_credit_cost(
+        cls,
+        model: Optional[str],
+        duration: Optional[str] = "8",
+        output_count: Optional[int] = 1,
+    ) -> int:
+        count = max(1, output_count or 1)
+        m = (model or "").lower()
+        if "quality" in m:
+            return cls.FLOW_RATES["veo_quality"] * count
+        elif "fast" in m:
+            return cls.FLOW_RATES["veo_fast"] * count
+        elif "lite" in m:
+            return cls.FLOW_RATES["veo_lite"] * count
+        elif "veo" in m:
+            return cls.FLOW_RATES["veo_fast"] * count
+        elif "omni" in m:
+            d = str(duration or "8").replace("s", "").strip()
+            table = cls.FLOW_RATES["omni"]
+            return table.get(d, 12) * count
+        return 10 * count
+
     @classmethod
     def evaluate_submission_safety(
         cls,
@@ -42,9 +72,13 @@ class CreditPolicyManager:
                 logger.warning(msg)
                 return False, msg, None
 
-        # 2. Extract verified cost if present
+        # 2. Extract verified cost if present or calculate from verified schedule
         cost = caps.cost_per_job
         is_cost_verified = (caps.cost_status == "VERIFIED" and cost is not None)
+        if not is_cost_verified:
+            cost = cls.get_expected_credit_cost(job.model, job.duration, job.output_count)
+            if caps.credit_status == "VERIFIED":
+                is_cost_verified = True
         
         # 3. Check Max Job Cost limit if cost is known
         max_job_cost = config.get("MAX_JOB_COST")

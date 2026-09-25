@@ -4,6 +4,7 @@ __pycache__/
 .env
 data/*.db
 data/*.sqlite
+data/*.png
 data/media/
 logs/
 output/

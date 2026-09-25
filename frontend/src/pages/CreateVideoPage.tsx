@@ -77,13 +77,29 @@ export const CreateVideoPage: React.FC<CreateVideoPageProps> = ({
   const isCostVerified = caps?.cost_status === 'VERIFIED' && caps?.cost_per_job !== undefined && caps?.cost_per_job !== null;
   const isBalanceVerified = caps?.credit_status === 'VERIFIED' && caps?.credit_balance !== undefined && caps?.credit_balance !== null;
   
-  // Dynamic cost calculation based on verified Google Flow rates
+  const isVeo = (model || '').toLowerCase().includes('veo');
+
+  // Dynamic cost calculation based on authentic Google Flow verified rates:
+  // Omni 1.1 Flash: 4s = 7, 6s = 10, 8s = 12, 10s = 15 credits
+  // Veo 3.1 - Lite: 10 credits / output (native 8s)
+  // Veo 3.1 - Fast: 20 credits / output (native 8s)
+  // Veo 3.1 - Quality: 100 credits / output (native 8s)
   const getEstimatedCost = () => {
     if (isCostVerified) return caps!.cost_per_job! * outputCount;
-    const durNum = parseInt(duration, 10) || 8;
-    const isOmni = (model || '').toLowerCase().includes('omni');
-    const basePerSec = isOmni ? 1.5 : 4.0;
-    return Math.round(durNum * basePerSec * outputCount);
+    const m = (model || '').toLowerCase();
+    let perOutput = 10;
+    if (m.includes('quality')) {
+      perOutput = 100;
+    } else if (m.includes('fast')) {
+      perOutput = 20;
+    } else if (m.includes('lite')) {
+      perOutput = 10;
+    } else if (m.includes('omni')) {
+      const dur = duration.replace('s', '').trim();
+      const omniTable: Record<string, number> = { '4': 7, '6': 10, '8': 12, '10': 15 };
+      perOutput = omniTable[dur] || 12;
+    }
+    return perOutput * outputCount;
   };
   const verifiedCost = getEstimatedCost();
 
@@ -184,20 +200,37 @@ export const CreateVideoPage: React.FC<CreateVideoPageProps> = ({
                 )}
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {availableModels.map((m) => (
-                  <button
-                    key={m}
-                    type="button"
-                    onClick={() => setModel(m)}
-                    className={`py-2 px-3 rounded-xl text-xs font-medium border text-left truncate transition-all ${
-                      model === m
-                        ? 'bg-brand-600/20 border-brand-500 text-brand-300'
-                        : 'bg-studio-950 border-slate-800 text-slate-400 hover:text-slate-200'
-                    }`}
-                  >
-                    {m}
-                  </button>
-                ))}
+                {availableModels.map((m) => {
+                  const mLower = m.toLowerCase();
+                  let costLabel = '10 cr';
+                  if (mLower.includes('quality')) costLabel = '100 cr';
+                  else if (mLower.includes('fast')) costLabel = '20 cr';
+                  else if (mLower.includes('lite')) costLabel = '10 cr';
+                  else if (mLower.includes('omni')) costLabel = '7-15 cr';
+
+                  return (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => {
+                        setModel(m);
+                        if (mLower.includes('veo')) {
+                          setDuration('8');
+                        }
+                      }}
+                      className={`py-2 px-3 rounded-xl text-xs font-medium border text-left transition-all flex items-center justify-between ${
+                        model === m
+                          ? 'bg-brand-600/20 border-brand-500 text-brand-300'
+                          : 'bg-studio-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      <span className="truncate">{m}</span>
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 shrink-0 ml-1">
+                        {costLabel}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
@@ -227,19 +260,29 @@ export const CreateVideoPage: React.FC<CreateVideoPageProps> = ({
 
             {/* Duration */}
             <div className="space-y-2">
-              <label className="text-xs font-medium text-slate-300 flex items-center space-x-1.5">
-                <Clock className="w-3.5 h-3.5 text-slate-400" />
-                <span>Clip Duration</span>
-              </label>
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-medium text-slate-300 flex items-center space-x-1.5">
+                  <Clock className="w-3.5 h-3.5 text-slate-400" />
+                  <span>Clip Duration</span>
+                </label>
+                {isVeo && (
+                  <span className="text-[10px] text-amber-400/90 font-mono">
+                    8s fixed for Veo models
+                  </span>
+                )}
+              </div>
               <div className="grid grid-cols-4 gap-1.5">
                 {(caps?.durations || ['4', '6', '8', '10']).map((d) => (
                   <button
                     key={d}
                     type="button"
+                    disabled={isVeo && d !== '8'}
                     onClick={() => setDuration(d)}
                     className={`py-2 px-1 text-center rounded-xl text-xs font-medium border transition-all ${
-                      duration === d
+                      (isVeo ? '8' : duration) === d
                         ? 'bg-brand-600/20 border-brand-500 text-brand-300'
+                        : isVeo
+                        ? 'bg-studio-950/40 border-slate-900 text-slate-600 cursor-not-allowed'
                         : 'bg-studio-950 border-slate-800 text-slate-400 hover:text-slate-200'
                     }`}
                   >
