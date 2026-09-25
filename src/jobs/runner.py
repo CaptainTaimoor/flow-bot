@@ -39,7 +39,7 @@ class JobRunner:
 
         while self.running:
             try:
-                job_to_run = None
+                job_id = None
                 gen_id = None
                 job_data = None
 
@@ -47,10 +47,11 @@ class JobRunner:
                     queue = JobQueue(db)
                     job = queue.claim_next_job()
                     if job:
-                        self._current_job_id = job.id
-                        logger.info(f"Claimed job #{job.id}: '{job.prompt[:40]}...'")
-                        gen_id = queue.add_generation(job.id, GenerationState.QUEUED)
-                        event_broadcaster.publish("job.started", {"job_id": job.id, "prompt": job.prompt})
+                        job_id = job.id
+                        self._current_job_id = job_id
+                        logger.info(f"Claimed job #{job_id}: '{job.prompt[:40]}...'")
+                        gen_id = queue.add_generation(job_id, GenerationState.QUEUED)
+                        event_broadcaster.publish("job.started", {"job_id": job_id, "prompt": job.prompt})
 
                         job_data = JobCreate(
                             prompt=job.prompt,
@@ -62,21 +63,20 @@ class JobRunner:
                             generation_mode=job.generation_mode,
                             allow_unverified_credits=False,
                         )
-                        job_to_run = job
 
-                if job_to_run and gen_id and job_data:
+                if job_id and gen_id and job_data:
                     try:
-                        await self._process_job(job_to_run.id, gen_id, job_data)
+                        await self._process_job(job_id, gen_id, job_data)
                     except Exception as e:
-                        logger.error(f"Job #{job_to_run.id} failed: {e}", exc_info=True)
+                        logger.error(f"Job #{job_id} failed: {e}", exc_info=True)
                         with get_db_context() as db:
                             r = Repository(db)
                             r.update_generation_state(gen_id, GenerationState.FAILED, error_message=str(e))
-                            r.update_job_status(job_to_run.id, JobStatus.FAILED, error_message=str(e))
-                        event_broadcaster.publish("job.failed", {"job_id": job_to_run.id, "error": str(e)})
+                            r.update_job_status(job_id, JobStatus.FAILED, error_message=str(e))
+                        event_broadcaster.publish("job.failed", {"job_id": job_id, "error": str(e)})
                     finally:
                         self._current_job_id = None
-                        self._cancel_requested_jobs.discard(job_to_run.id)
+                        self._cancel_requested_jobs.discard(job_id)
 
                 await asyncio.sleep(2)
             except Exception as loop_err:
@@ -273,9 +273,10 @@ class JobRunner:
 
             # 19. Ready & DB Persistence
             update_state(GenerationState.READY)
+            created_asset_id = None
+            filename = os.path.basename(video_path)
             with get_db_context() as db:
                 r = Repository(db)
-                filename = os.path.basename(video_path)
                 asset = r.create_asset(
                     job_id=job_id,
                     generation_id=gen_id,
@@ -294,17 +295,18 @@ class JobRunner:
                     correlation_evidence=correlation_evidence if 'correlation_evidence' in locals() else None,
                     ffprobe_metadata=meta.get("ffprobe_metadata"),
                 )
+                created_asset_id = asset.id
                 r.update_generation_state(gen_id, GenerationState.SUCCESS)
                 r.update_job_status(job_id, JobStatus.SUCCESS)
 
             # 20. Completed Notification
-            update_state(GenerationState.COMPLETED)
+            update_state(GenerationState.SUCCESS)
             event_broadcaster.publish("job.completed", {
                 "job_id": job_id,
-                "asset_id": asset.id,
+                "asset_id": created_asset_id,
                 "filename": filename,
             })
-            logger.info(f"Job #{job_id} successfully completed. Asset ID: {asset.id}")
+            logger.info(f"Job #{job_id} successfully completed. Asset ID: {created_asset_id}")
 
     async def stop(self):
         self.running = False

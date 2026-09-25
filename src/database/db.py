@@ -16,7 +16,7 @@ engine = create_engine(
     echo=False,
 )
 
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, expire_on_commit=False, bind=engine)
 
 def _migrate_columns():
     """Ensures newly added columns are safely added to existing SQLite database tables."""
