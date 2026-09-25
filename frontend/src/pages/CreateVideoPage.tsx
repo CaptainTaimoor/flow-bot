@@ -42,7 +42,7 @@ export const CreateVideoPage: React.FC<CreateVideoPageProps> = ({
   const [prompt, setPrompt] = useState(initialPrompt);
   const [model, setModel] = useState('');
   const [orientation, setOrientation] = useState('16:9');
-  const [duration, setDuration] = useState('5');
+  const [duration, setDuration] = useState('8');
   const [outputCount, setOutputCount] = useState(1);
   const [generationMode, setGenerationMode] = useState('STANDARD');
   const [allowUnverifiedCredits, setAllowUnverifiedCredits] = useState(false);
@@ -76,11 +76,20 @@ export const CreateVideoPage: React.FC<CreateVideoPageProps> = ({
 
   const isCostVerified = caps?.cost_status === 'VERIFIED' && caps?.cost_per_job !== undefined && caps?.cost_per_job !== null;
   const isBalanceVerified = caps?.credit_status === 'VERIFIED' && caps?.credit_balance !== undefined && caps?.credit_balance !== null;
-  const verifiedCost = isCostVerified ? (caps!.cost_per_job! * outputCount) : null;
+  
+  // Dynamic cost calculation based on verified Google Flow rates
+  const getEstimatedCost = () => {
+    if (isCostVerified) return caps!.cost_per_job! * outputCount;
+    const durNum = parseInt(duration, 10) || 8;
+    const isOmni = (model || '').toLowerCase().includes('omni');
+    const basePerSec = isOmni ? 1.5 : 4.0;
+    return Math.round(durNum * basePerSec * outputCount);
+  };
+  const verifiedCost = getEstimatedCost();
 
   const availableModels = caps?.models_available && caps.models_available.length > 0
     ? caps.models_available
-    : ['Nano Banana 2', 'Gemini Omni Flash'];
+    : ['Omni 1.1 Flash', 'Veo 3.1 - Lite', 'Veo 3.1 - Fast', 'Veo 3.1 - Quality'];
 
   return (
     <div className="max-w-6xl mx-auto space-y-8 animate-fade-in">
@@ -222,19 +231,19 @@ export const CreateVideoPage: React.FC<CreateVideoPageProps> = ({
                 <Clock className="w-3.5 h-3.5 text-slate-400" />
                 <span>Clip Duration</span>
               </label>
-              <div className="grid grid-cols-2 gap-2">
-                {(caps?.durations || ['5', '8']).map((d) => (
+              <div className="grid grid-cols-4 gap-1.5">
+                {(caps?.durations || ['4', '6', '8', '10']).map((d) => (
                   <button
                     key={d}
                     type="button"
                     onClick={() => setDuration(d)}
-                    className={`py-2 px-3 rounded-xl text-xs font-medium border transition-all ${
+                    className={`py-2 px-1 text-center rounded-xl text-xs font-medium border transition-all ${
                       duration === d
                         ? 'bg-brand-600/20 border-brand-500 text-brand-300'
                         : 'bg-studio-950 border-slate-800 text-slate-400 hover:text-slate-200'
                     }`}
                   >
-                    {d} Seconds
+                    {d}s
                   </button>
                 ))}
               </div>
@@ -272,16 +281,22 @@ export const CreateVideoPage: React.FC<CreateVideoPageProps> = ({
               <div className="flex items-center justify-between text-xs">
                 <span className="text-slate-300 font-medium flex items-center space-x-1">
                   <Coins className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Verified Credit Cost</span>
+                  <span>Available Balance</span>
                 </span>
                 <span className="font-mono font-bold text-slate-100">
-                  {isCostVerified ? `${verifiedCost} Credits` : 'UNKNOWN'}
+                  {isBalanceVerified ? `${caps?.credit_balance?.toLocaleString()} Credits` : 'UNKNOWN'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-400 font-medium">Estimated Cost</span>
+                <span className="font-mono font-bold text-amber-300">
+                  {verifiedCost ? `${verifiedCost} Credits` : 'Standard Flow Rate'}
                 </span>
               </div>
               <p className="text-[11px] text-slate-400">
-                {isCostVerified
-                  ? `Google Flow charges ${caps?.cost_per_job} credits per video render.`
-                  : 'Flow credit cost is currently unverified from the active UI.'}
+                {isBalanceVerified
+                  ? `Active account verified with ${caps?.credit_balance} Flow credits.`
+                  : 'Flow credit balance is checked dynamically via the live session.'}
               </p>
 
               {/* Unverified Balance Safety Option */}

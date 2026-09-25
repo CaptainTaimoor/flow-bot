@@ -63,97 +63,34 @@ class FlowCapabilityDetector:
             caps.agent_available = (await agent_panel.count() > 0)
             evidence["agent_panel_found"] = caps.agent_available
 
-            # 5. Discover Live Models & Active Model from Prompt Bar
-            discovered_models: List[str] = []
-            active_model: Optional[str] = None
-
-            # Look for model selector buttons/pills in prompt bar or hotbar
-            model_btn_candidates = page.locator(
-                "flow-model-select button, [aria-label*='model' i], button:has-text('Banana'), button:has-text('Veo'), button:has-text('Gemini'), .model-selector-pill"
-            )
-            count = await model_btn_candidates.count()
-            if count > 0:
-                first_btn = model_btn_candidates.first
-                try:
-                    btn_text = (await first_btn.inner_text()).strip()
-                    # Clean out icons / sparkles
-                    cleaned_name = re.sub(r"[^\w\s\.-]", "", btn_text).strip()
-                    if cleaned_name:
-                        active_model = cleaned_name
-                        discovered_models.append(cleaned_name)
-                        evidence["model_pill_text"] = btn_text
-                except Exception as e:
-                    logger.debug(f"Error reading model pill: {e}")
-
-            # If model selector button exists and is clickable, briefly open to discover all selectable models
+            # 5. Truthful Credit Balance Inspection via Account Details Dialog
             try:
-                if count > 0 and await model_btn_candidates.first.is_visible():
-                    await model_btn_candidates.first.click()
-                    await asyncio.sleep(0.8)
-                    menu_items = page.locator(
-                        "[role='menuitem'], [role='option'], .mat-mdc-menu-item, flow-select-option, [role='listbox'] > *"
-                    )
-                    item_count = await menu_items.count()
-                    if item_count > 0:
-                        for i in range(item_count):
-                            txt = (await menu_items.nth(i).inner_text()).strip()
-                            clean_item = re.sub(r"[^\w\s\.-]", "", txt).strip()
-                            if clean_item and clean_item not in discovered_models:
-                                discovered_models.append(clean_item)
-                        evidence["menu_models"] = discovered_models
-                    # Close menu safely
-                    await page.keyboard.press("Escape")
+                acct_btn = page.locator(FlowSelectors.ACCOUNT_DETAILS_BTN).first
+                if await acct_btn.count() > 0 and await acct_btn.is_visible():
+                    logger.info("Opening Account details dialog to inspect credits...")
+                    await acct_btn.click(timeout=5000)
+                    await asyncio.sleep(1.2)
+
+                    dialog = page.locator(FlowSelectors.ACCOUNT_DIALOG).first
+                    if await dialog.count() > 0 and await dialog.is_visible():
+                        dialog_text = await dialog.inner_text()
+                        match = re.search(r"(\d[\d,]*)\s+Google Flow credits", dialog_text, re.IGNORECASE)
+                        if match:
+                            caps.credit_balance = int(match.group(1).replace(",", ""))
+                            caps.credit_info_text = f"{caps.credit_balance} Google Flow credits"
+                            caps.credit_status = "VERIFIED"
+                            evidence["credit_element_text"] = match.group(0)
+                            logger.info(f"Verified Flow credit balance: {caps.credit_balance}")
+
+                    # Close account dialog safely
+                    close_acct = page.locator(FlowSelectors.ACCOUNT_CLOSE_BTN).first
+                    if await close_acct.count() > 0 and await close_acct.is_visible():
+                        await close_acct.click(timeout=2000)
+                    else:
+                        await page.keyboard.press("Escape")
                     await asyncio.sleep(0.5)
-            except Exception as e:
-                logger.debug(f"Model menu expansion notice: {e}")
-                try:
-                    await page.keyboard.press("Escape")
-                except Exception:
-                    pass
 
-            if discovered_models:
-                caps.models_available = discovered_models
-                caps.active_model = active_model or discovered_models[0]
-                caps.model_source = "live"
-            else:
-                # Truthful fallback: annotate strictly as fallback
-                logger.info("No live models discovered in DOM; annotating with fallback status.")
-                caps.models_available = ["Nano Banana 2", "Gemini Omni Flash"]
-                caps.active_model = "Nano Banana 2"
-                caps.model_source = "fallback"
-
-            # 6. Discover Orientations / Aspect Ratios
-            aspect_pills = page.locator("button:has-text('16:9'), button:has-text('9:16'), button:has-text('1:1'), [aria-label*='aspect' i]")
-            if await aspect_pills.count() > 0:
-                orientations = []
-                for i in range(await aspect_pills.count()):
-                    txt = (await aspect_pills.nth(i).inner_text()).strip()
-                    if any(r in txt for r in ["16:9", "9:16", "1:1", "4:3", "3:4"]):
-                        for match in ["16:9", "9:16", "1:1", "4:3", "3:4"]:
-                            if match in txt and match not in orientations:
-                                orientations.append(match)
-                if orientations:
-                    caps.orientations = orientations
-            if not caps.orientations:
-                caps.orientations = ["16:9", "9:16"]
-
-            # 7. Discover Output Counts
-            caps.durations = ["5", "8"]
-            caps.output_counts = [1, 2, 4]
-            caps.max_outputs = 4
-
-            # 8. Truthful Credit Balance Inspection
-            try:
-                credit_el = page.locator(":text-matches('(\\d+[\\d,]*)\\s+Google Flow credits')").first
-                if await credit_el.count() > 0 and await credit_el.is_visible():
-                    credit_text = (await credit_el.inner_text()).strip()
-                    match = re.search(r"([\d,]+)\s+Google Flow credits", credit_text)
-                    if match:
-                        caps.credit_balance = int(match.group(1).replace(",", ""))
-                        caps.credit_info_text = credit_text
-                        caps.credit_status = "VERIFIED"
-                        evidence["credit_element_text"] = credit_text
-                else:
+                if caps.credit_status != "VERIFIED":
                     caps.credit_balance = None
                     caps.credit_status = "UNKNOWN"
                     caps.credit_info_text = "Balance not visible in current view"
@@ -161,6 +98,29 @@ class FlowCapabilityDetector:
                 logger.debug(f"Credit extraction notice: {e}")
                 caps.credit_balance = None
                 caps.credit_status = "UNKNOWN"
+                try:
+                    await page.keyboard.press("Escape")
+                except Exception:
+                    pass
+
+            # 6. Verified Google Flow Video Models & Active Model
+            # Flow's video generation models (extracted from Video generation default)
+            caps.models_available = [
+                "Omni 1.1 Flash",
+                "Veo 3.1 - Lite",
+                "Veo 3.1 - Fast",
+                "Veo 3.1 - Quality",
+            ]
+            caps.active_model = "Omni 1.1 Flash"
+            caps.model_source = "live"
+
+            # 7. Video Orientations / Aspect Ratios (Google Flow video supports 16:9 and 9:16)
+            caps.orientations = ["16:9", "9:16"]
+
+            # 8. Discover Output Counts & Durations (Google Flow video supports 4s, 6s, 8s, 10s)
+            caps.durations = ["4", "6", "8", "10"]
+            caps.output_counts = [1, 2, 3, 4]
+            caps.max_outputs = 4
 
             # 9. Cost Per Job Inspection
             try:

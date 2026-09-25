@@ -191,6 +191,7 @@ class FlowAssetTracker:
                     if await menu_dl.count() > 0 and await menu_dl.is_visible():
                         logger.info("Revealing Download options submenu...")
                         await menu_dl.click()
+                        await asyncio.sleep(0.8)
 
                         # Explicitly wait for resolution options (720p / 1080p)
                         res_opt = self.page.locator(FlowSelectors.DOWNLOAD_QUALITY_OPTIONS).first

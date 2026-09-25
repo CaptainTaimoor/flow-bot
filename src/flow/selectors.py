@@ -52,6 +52,27 @@ class FlowSelectors:
     )
 
     # Model & Parameter Selectors in Prompt Bar
+    SETTINGS_TRIGGER_BTN = (
+        "button[aria-label='Settings trigger'], "
+        ".settings-trigger-button, "
+        "flow-creative-agent-prompt-box button.settings-trigger-button, "
+        "button:has-text('Banana'), "
+        "button:has-text('Veo'), "
+        "button:has-text('Video'), "
+        "button:has-text('x1')"
+    )
+    AGENT_MODE_CHIP = ".agent-mode-chip, button:has-text('Agent')"
+    VIDEO_TAB_TOGGLE = "mat-button-toggle:has-text('Video'), button:has-text('Video')"
+    IMAGE_TAB_TOGGLE = "mat-button-toggle:has-text('Image'), button:has-text('Image')"
+    SELECT_MODEL_FAMILY_BTN = "button[aria-label='Select model family']"
+    PANEL_CLOSE_BTN = "button[aria-label='Close'], button:has-text('close')"
+    RESOLUTION_DOWNLOAD_BTN = (
+        ".cdk-overlay-pane button[role='menuitem']:has-text('Original size'), "
+        ".cdk-overlay-pane button[role='menuitem']:has-text('720p'), "
+        ".cdk-overlay-pane button[role='menuitem']:has-text('1080p'), "
+        "button[role='menuitem']:has-text('Original size')"
+    )
+
     MODEL_SELECTOR_PILL = (
         "flow-model-select button, "
         "[aria-label*='model' i], "
@@ -119,16 +140,41 @@ class FlowSelectors:
         "[data-tooltip*='Download' i]"
     )
     DOWNLOAD_QUALITY_OPTIONS = (
-        "[role='menuitem']:has-text('720p'), "
-        "[role='menuitem']:has-text('1080p'), "
+        ".cdk-overlay-pane button[role='menuitem']:has-text('Original size'), "
+        ".cdk-overlay-pane button[role='menuitem']:has-text('720p'), "
+        ".cdk-overlay-pane button[role='menuitem']:has-text('1080p'), "
         "[role='menuitem']:has-text('Original size'), "
-        "button:has-text('720p'), "
-        "button:has-text('1080p'), "
-        ":text-matches('720p', 'i')"
+        "[role='menuitem']:has-text('720p'), "
+        "[role='menuitem']:has-text('1080p')"
     )
     EXPORT_BUTTONS = (
         "button:has-text('Export'), "
         "button[aria-label*='Export' i]"
+    )
+
+    # Agent Settings Panel
+    SETTINGS_BTN = (
+        "button[aria-label='Settings'], "
+        "flow-creative-agent-prompt-box button:has-text('tune'), "
+        "button:has-text('tune')"
+    )
+    AGENT_PANEL = "flow-agent-panel"
+    VIDEO_MODEL_PICKER = (
+        "button[aria-label='Video generation default model'], "
+        ".video-model-picker-button"
+    )
+    VIDEO_MODEL_MENU_ITEMS = (
+        "[role='menu'] [role='menuitem'], "
+        ".flow-model-picker-panel [role='menuitem'], "
+        ".model-picker-panel [role='menuitem']"
+    )
+    SETTINGS_SAVE_BTN = (
+        "button.settings-save-button, "
+        "flow-agent-panel button:has-text('Save')"
+    )
+    CONFIRM_NEVER_RADIO = (
+        "flow-agent-panel mat-radio-button:has-text('Never'), "
+        "flow-agent-panel [role='radio']:has-text('Never')"
     )
 
     # Credit & Account Inspection
@@ -141,4 +187,19 @@ class FlowSelectors:
         ".flow-credit-banner, "
         "[aria-label*='credits' i], "
         ":text-matches('Google Flow credits')"
+    )
+    ACCOUNT_DETAILS_BTN = (
+        "[aria-label='Account details'], "
+        ".header-user-button, "
+        "flow-header-user-icon div[role='button']"
+    )
+    ACCOUNT_DIALOG = (
+        "div[role='dialog'].panel, "
+        ".flow-account-panel-overlay, "
+        ".panel"
+    )
+    ACCOUNT_CLOSE_BTN = (
+        ".flow-account-panel-overlay button[aria-label='Close'], "
+        ".panel button:has-text('close'), "
+        ".panel mat-icon:has-text('close')"
     )
